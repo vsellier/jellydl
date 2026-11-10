@@ -245,7 +245,7 @@ fn draw_detail(f: &mut Frame, it: Option<&BaseItem>, ctx: DetailCtx, area: Rect)
         width: inner.width / 2,
         ..inner
     };
-    let size = poster.size_for(resize(), max);
+    let size = poster.size_for(resize(), max.as_size());
     let img = Rect {
         width: size.width,
         height: size.height,
@@ -796,7 +796,7 @@ mod tests {
         // A portrait image, drawn with half blocks as in a terminal without image support.
         let img = image::DynamicImage::new_rgb8(200, 300);
         let mut posters = PosterCache::default();
-        let p = Picker::from_fontsize((10, 20)).new_resize_protocol(img);
+        let p = Picker::halfblocks().new_resize_protocol(img);
         posters.insert("m1".into(), Poster::Ready(Box::new(p)));
 
         let with = render(&mut posters, true);
