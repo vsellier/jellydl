@@ -14,11 +14,11 @@
 
 # Empty folders owned by the default user. Runs on the build machine,
 # so multi-platform release builds need no emulation.
-FROM --platform=$BUILDPLATFORM rust:1.98-alpine3.22 AS dirs
+FROM --platform=$BUILDPLATFORM rust:1.99-alpine3.22 AS dirs
 RUN mkdir -p /out/config /out/data /out/downloads /out/home \
  && chown -R 1000:1000 /out
 
-FROM rust:1.98-alpine3.22 AS builder
+FROM rust:1.99-alpine3.22 AS builder
 # A C compiler for the `ring` crate (TLS).
 RUN apk add --no-cache musl-dev
 WORKDIR /src
