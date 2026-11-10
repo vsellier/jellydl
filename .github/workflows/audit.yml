@@ -1,0 +1,29 @@
+# Check the dependencies against the RustSec advisory database.
+#
+# The job fails when a dependency has a known vulnerability. Other advisories
+# (unmaintained or unsound crates) are shown as warnings.
+# It runs every week too: new advisories appear for code that did not change.
+
+name: Audit
+
+on:
+  push:
+    paths: ["Cargo.toml", "Cargo.lock", ".github/workflows/audit.yml"]
+  pull_request:
+    paths: ["Cargo.toml", "Cargo.lock"]
+  schedule:
+    - cron: "0 6 * * 1" # Monday 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
+      - run: cargo audit

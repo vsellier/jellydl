@@ -1,0 +1,35 @@
+[package]
+name = "jellydl"
+version = "0.1.0"
+edition = "2024"
+description = "Terminal app to browse a Jellyfin library and download videos"
+license = "MIT"
+readme = "README.md"
+rust-version = "1.89"
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive", "env"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
+ratatui = "0.29"
+tokio = { version = "1", features = ["full"] }
+tokio-util = "0.7"
+futures = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["socks", "stream", "json", "rustls-tls", "http2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+directories = "5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
+uuid = { version = "1", features = ["v4", "serde"] }
+fastrand = "2"
+ratatui-image = { version = "8.1.1", default-features = false, features = ["crossterm"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+deunicode = "1.6.2"
+
+[dev-dependencies]
+wiremock = "0.6"
+tempfile = "3"

@@ -1,0 +1,47 @@
+# jellydl configuration sample
+# Copy it to ~/.config/jellydl/config.toml, then run: chmod 600 ~/.config/jellydl/config.toml
+
+# URL of the Jellyfin server, with its base path if any.
+server_url = "https://jellyfin.example.org"
+
+# Where downloaded files go. "~" is expanded.
+# For example: <download_dir>/Elodie.2001/Elodie.2001.mkv
+#              <download_dir>/Garden.Diaries/S01/Garden.Diaries.S01E03.Pilot.mkv
+download_dir = "~/Videos/jellyfin"
+
+# Max downloads at the same time (1-32). Change it at runtime with + and -.
+max_parallel = 3
+
+# Total download speed limit for all downloads. Examples: "500K", "2MB". Not set = no limit.
+# max_speed = "2MB"
+
+# Proxy for all requests: http://, https://, socks5:// or socks5h://
+# socks5h:// also resolves host names through the proxy.
+# Not set = the HTTP_PROXY / HTTPS_PROXY / ALL_PROXY environment variables are used.
+# proxy = "socks5h://user:pass@127.0.0.1:1080"
+# no_proxy = "localhost,192.168.0.0/16"   # hosts that skip the proxy
+
+# true only for a server with a self-signed certificate.
+accept_invalid_certs = false
+
+# User-Agent header. Not set = "jellydl/<version>".
+# Change it only when a proxy or firewall blocks unknown clients.
+# user_agent = "Mozilla/5.0 (X11; Linux x86_64; rv:145.0) Gecko/20100101 Firefox/145.0"
+
+# Keep the login token and use it again at the next start (username/password only).
+reuse_session = true
+
+# Values Jellyfin requires to identify the client. Each one is optional.
+[identity]
+# client    = "jellydl"     # default: "jellydl"
+# device    = "jellydl"     # default: "jellydl"
+# version   = "0.1.0"       # default: the jellydl version
+# device_id = "my-laptop"   # default: generated once, then saved
+
+[auth]
+# Either an API key (Dashboard -> API Keys)...
+# api_key = "0123456789abcdef"
+# ...or a username with a password, or with a command that prints the password.
+username = "me"
+password = "change-me"
+# password_cmd = "pass show jellyfin"
