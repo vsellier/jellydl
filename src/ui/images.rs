@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc;
 use std::time::Duration;
 
+use ratatui_image::FontSize;
 use ratatui_image::picker::{Picker, ProtocolType};
 
 /// What tmux says about images.
@@ -60,7 +61,10 @@ pub fn choose(base: Picker, tmux: Option<&TmuxInfo>) -> Picker {
     match tmux {
         Some(t) if t.sixel_built && t.outer_sixel => {
             // `from_fontsize` does not wrap output in tmux passthrough: tmux gets the sixel data.
-            let mut p = Picker::from_fontsize(t.cell.unwrap_or(base.font_size()));
+            // It is deprecated, but it is the only way to give our own cell size.
+            #[allow(deprecated)]
+            let mut p =
+                Picker::from_fontsize(t.cell.map(FontSize::from).unwrap_or(base.font_size()));
             p.set_protocol_type(ProtocolType::Sixel);
             p
         }
@@ -167,7 +171,9 @@ mod tests {
 
     #[test]
     fn sixel_in_tmux_only_when_both_sides_support_it() {
-        let base = || Picker::from_fontsize((10, 20));
+        #[allow(deprecated)]
+        let base = || Picker::from_fontsize((10, 20).into());
+        let font = |p: &Picker| (p.font_size().width, p.font_size().height);
         let both = TmuxInfo {
             sixel_built: true,
             outer_sixel: true,
@@ -175,7 +181,7 @@ mod tests {
         };
         let p = choose(base(), Some(&both));
         assert_eq!(p.protocol_type(), ProtocolType::Sixel);
-        assert_eq!(p.font_size(), (9, 18));
+        assert_eq!(font(&p), (9, 18));
 
         let not_built = TmuxInfo {
             sixel_built: false,
@@ -186,7 +192,7 @@ mod tests {
             base().protocol_type()
         );
         let no_cell = TmuxInfo { cell: None, ..both };
-        assert_eq!(choose(base(), Some(&no_cell)).font_size(), (10, 20));
+        assert_eq!(font(&choose(base(), Some(&no_cell))), (10, 20));
         assert_eq!(choose(base(), None).protocol_type(), base().protocol_type());
     }
 }
