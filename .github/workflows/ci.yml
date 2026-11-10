@@ -1,0 +1,38 @@
+# Run the checks on the pre-release branch and on pull requests to it.
+#
+# release.yml calls this workflow too, before it builds a release.
+# To block merges when the checks fail, make "tests" a required status check
+# in the branch protection rule.
+
+name: CI
+
+on:
+  push:
+    branches: [pre-release]
+  pull_request:
+    branches: [pre-release]
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A new push cancels the run that is still going for the same branch or PR.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo clippy --all-targets --locked -- -D warnings
+      - run: cargo test --locked
