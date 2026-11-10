@@ -2,6 +2,10 @@
 
 A terminal app to browse and search a Jellyfin library and download videos.
 
+![jellydl: a library of family videos sorted by name, with the image and details of the selected video](docs/screenshot.png)
+
+<sub>Screenshot made with a demo server.</sub>
+
 - Browse libraries and folders, and search videos.
 - Sort library lists like the Jellyfin web client, and jump page by page.
 - See the director, writers and cast of the selected video.
