@@ -43,6 +43,96 @@ jellydl is provided "as is", without warranty.
 
 ## Install
 
+### From a release binary
+
+Each [GitHub release](https://github.com/vsellier/jellydl/releases) has an archive for each system:
+
+| Archive | System |
+|---|---|
+| `jellydl-<version>-linux-amd64.tar.gz` | Linux x86_64 (static, any distribution) |
+| `jellydl-<version>-linux-arm64.tar.gz` | Linux ARM64 (static, any distribution) |
+| `jellydl-<version>-linux-armv7.tar.gz` | Linux 32-bit ARM, armv7 with hardware float (static, any distribution) |
+| `jellydl-<version>-macos-amd64.tar.gz` | macOS Intel |
+| `jellydl-<version>-macos-arm64.tar.gz` | macOS Apple Silicon |
+
+Download the archive for your system. For example, version 0.1.0 for Linux x86_64:
+
+```sh
+version=0.1.0
+archive=jellydl-$version-linux-amd64.tar.gz
+curl -LO https://github.com/vsellier/jellydl/releases/download/v$version/$archive
+```
+
+[Check the archive](#check-a-downloaded-binary), then extract it and copy the binary to a folder in your `PATH`:
+
+```sh
+tar -xzf $archive
+install -m 755 jellydl-$version-linux-amd64/jellydl ~/.local/bin/jellydl
+jellydl --version
+```
+
+On macOS, the binary is not signed by Apple. If you download the archive with a web browser,
+macOS blocks the binary. Remove the block after you check the archive:
+
+```sh
+xattr -d com.apple.quarantine ~/.local/bin/jellydl
+```
+
+`curl` does not add this block.
+
+### Check a downloaded binary
+
+Each archive has a signed build provenance attestation. It proves that the archive
+was built by the `Release` workflow of this repository, from the commit of the tag,
+and that nobody changed it after. Check it with the [GitHub CLI](https://cli.github.com/)
+(run `gh auth login` first):
+
+```sh
+gh attestation verify $archive --repo vsellier/jellydl
+```
+
+For a stricter check, also require the `Release` workflow and the tag of the version:
+
+```sh
+gh attestation verify $archive --repo vsellier/jellydl \
+  --signer-workflow vsellier/jellydl/.github/workflows/release.yml \
+  --source-ref refs/tags/v$version
+```
+
+The command shows `Verification succeeded!` and the workflow that built the archive.
+It fails if the archive was changed, or was built somewhere else. Do not use the binary then.
+
+### Check that the file is the release asset
+
+The releases are immutable: after a release is published, nobody can change, add or remove its archives,
+and GitHub signs a release attestation with the tag, the commit and the SHA-256 digest of each archive.
+The release page also shows the SHA-256 digest of each archive.
+
+Check that your file is the archive that the `Release` workflow uploaded to the release:
+
+```sh
+gh release verify v$version --repo vsellier/jellydl
+gh release verify-asset v$version $archive --repo vsellier/jellydl
+```
+
+The first command checks the release attestation. The second command fails if your file is
+not an asset of this release, for example if it was changed after the download.
+
+Use both checks: `gh attestation verify` proves who built the archive and from which commit,
+and `gh release verify-asset` proves that the file is the one published in the release.
+
+### Check the download with the `.sha256` file
+
+The `.sha256` file only checks that the download is complete: anyone who can
+change the archive can also change that file.
+
+```sh
+curl -LO https://github.com/vsellier/jellydl/releases/download/v$version/$archive.sha256
+sha256sum -c $archive.sha256     # on macOS: shasum -a 256 -c $archive.sha256
+```
+
+### From the source
+
 ```sh
 cargo install --path .
 ```
@@ -241,6 +331,9 @@ A release also stops if a dependency has a known vulnerability.
 
 ## Release
 
+Before the first release, turn on immutable releases: on GitHub, open **Settings** > **General** >
+**Releases** and select **Enable release immutability**. Without it, `gh release verify-asset` does not work.
+
 Push a version tag. The version must match `Cargo.toml`:
 
 ```sh
@@ -248,38 +341,13 @@ git tag v0.1.0 && git push origin v0.1.0
 ```
 
 The `Release` GitHub workflow runs the tests, builds the binaries, creates a GitHub release with them,
-and publishes the Docker image `ghcr.io/vsellier/jellydl` (tags `<version>`, `<major>.<minor>` and `latest`):
-
-| Archive | System |
-|---|---|
-| `jellydl-<version>-linux-amd64.tar.gz` | Linux x86_64 (static, any distribution) |
-| `jellydl-<version>-linux-arm64.tar.gz` | Linux ARM64 (static, any distribution) |
-| `jellydl-<version>-linux-armv7.tar.gz` | Linux 32-bit ARM, armv7 with hardware float (static, any distribution) |
-| `jellydl-<version>-macos-amd64.tar.gz` | macOS Intel |
-| `jellydl-<version>-macos-arm64.tar.gz` | macOS Apple Silicon |
+and publishes the Docker image `ghcr.io/vsellier/jellydl` (tags `<version>`, `<major>.<minor>` and `latest`).
+The archives are listed in [Install](#from-a-release-binary).
 
 To build the binaries and the image without publishing them, run the workflow by hand from the Actions tab.
 
 The first time the image is published, GitHub makes the package private.
 To let everyone pull it, open the package settings on GitHub and set its visibility to public.
-
-### Check a downloaded binary
-
-Each archive has a signed build provenance attestation. It proves that the archive
-was built by the `Release` workflow of this repository, from the commit of the tag,
-and that nobody changed it after. Check it with the [GitHub CLI](https://cli.github.com/):
-
-```sh
-gh attestation verify jellydl-<version>-linux-amd64.tar.gz --repo vsellier/jellydl
-```
-
-The command fails if the archive was changed, or was built somewhere else.
-The `.sha256` file only checks that the download is complete: anyone who can
-change the archive can also change that file.
-
-```sh
-sha256sum -c jellydl-<version>-linux-amd64.tar.gz.sha256
-```
 
 ## License
 
