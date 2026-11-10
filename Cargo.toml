@@ -26,7 +26,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 uuid = { version = "1", features = ["v4", "serde"] }
 fastrand = "2"
-ratatui-image = { version = "8.1.1", default-features = false, features = ["crossterm"] }
+ratatui-image = { version = "11.1.0", default-features = false, features = ["crossterm"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 deunicode = "1.6.2"
 
