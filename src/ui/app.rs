@@ -16,7 +16,7 @@ use tokio::sync::mpsc;
 
 use super::input::TextInput;
 use super::view::{ListView, LoadKind, PAGE_SIZE, PageAction, Source};
-use crate::api::{BaseItem, Jellyfin, Person, QueryResult, Sort, SortField};
+use crate::api::{BaseItem, Jellyfin, NewSet, Person, QueryResult, Sort, SortField, date};
 use crate::download::{Command, Event as MgrEvent, Job, JobState, ManagerHandle, NewJob};
 use crate::paths;
 
@@ -128,6 +128,8 @@ pub enum AppEvent {
         item_id: String,
         poster: Poster,
     },
+    /// Which items are new, for the "new" tag in the lists.
+    NewSet(Result<NewSet, String>),
     Mgr(MgrEvent),
 }
 
@@ -146,6 +148,8 @@ pub enum Popup {
         cursor: usize,
         descending: bool,
     },
+    /// Set the last check to now: nothing is new after that.
+    ConfirmMarkSeen,
     ConfirmEnqueue {
         jobs: Vec<NewJob>,
         size: u64,
@@ -190,6 +194,12 @@ pub struct App {
     pub sort: Sort,
     /// Where the sort is saved between runs. `None`: not saved (tests).
     state_file: Option<PathBuf>,
+    /// Items added after this time (Unix seconds) are new. Changed only with `N`.
+    pub last_check: i64,
+    /// Lists show only the new items (`n`). The first screen is never filtered.
+    pub new_only: bool,
+    /// Which items are new, for the tag in the lists.
+    pub new_set: NewSet,
 
     pub popup: Option<Popup>,
     pub message: Option<Message>,
@@ -236,6 +246,9 @@ impl App {
             speed_limit,
             sort: Sort::default(),
             state_file: None,
+            last_check: date::now(),
+            new_only: false,
+            new_set: NewSet::empty(0),
             popup: None,
             message: None,
             ticks: 0,
@@ -244,15 +257,114 @@ impl App {
         };
         let root = app.new_view("Libraries", Source::Libraries);
         app.lib_stack.push(root);
+        app.new_set = NewSet::empty(app.last_check);
         app.load(app.lib_stack.len() - 1, 0, LoadKind::Replace, None);
         app
     }
 
-    /// Use the sort saved in `path`, and save the sort there when it changes.
+    /// Use the sort and the last check saved in `path`, and save them there when
+    /// they change. With no saved last check, it starts now: nothing is new yet.
     pub fn with_state_file(mut self, path: PathBuf) -> Self {
-        self.sort = super::state::load(&path).sort;
+        let state = super::state::load(&path);
+        self.sort = state.sort;
         self.state_file = Some(path);
+        match state.last_check {
+            Some(t) => self.last_check = t,
+            None => {
+                self.last_check = date::now();
+                self.save_state();
+            }
+        }
+        self.new_set = NewSet::empty(self.last_check);
+        self.refresh_new_set();
         self
+    }
+
+    fn save_state(&self) {
+        let Some(path) = &self.state_file else {
+            return;
+        };
+        let s = super::state::UiState {
+            sort: self.sort,
+            last_check: Some(self.last_check),
+        };
+        if let Err(e) = super::state::save(path, &s) {
+            tracing::warn!("cannot save the UI state: {e:#}");
+        }
+    }
+
+    /// Find again which items are new, for the tag in the lists.
+    fn refresh_new_set(&self) {
+        let (api, tx, since) = (self.api.clone(), self.tx.clone(), self.last_check);
+        tokio::spawn(async move {
+            let result = api
+                .new_set(None, since, true)
+                .await
+                .map(|(_, set)| set)
+                .map_err(|e| format!("{e:#}"));
+            let _ = tx.send(AppEvent::NewSet(result));
+        });
+    }
+
+    /// The filter date the current list should have.
+    fn wanted_filter(&self, v: &ListView) -> Option<i64> {
+        let filterable = !matches!(v.source, Source::Libraries);
+        (self.new_only && filterable).then_some(self.last_check)
+    }
+
+    /// Reload the current list when its filter differs from the wanted one: after
+    /// `n`, `N`, going back, or a tab change.
+    fn sync_filter(&mut self) {
+        let wanted = match self.current_view() {
+            Some(v) => self.wanted_filter(v),
+            None => return,
+        };
+        let (api, tx) = (self.api.clone(), self.tx.clone());
+        let Some(v) = self.current_view_mut() else {
+            return;
+        };
+        if v.new_since == wanted {
+            return;
+        }
+        v.new_since = wanted;
+        v.clear_marks();
+        // An empty search box: nothing to load yet.
+        if matches!(&v.source, Source::Search { term } if term.is_empty()) {
+            return;
+        }
+        Self::spawn_load(&api, &tx, v, 0, LoadKind::Replace, None);
+    }
+
+    /// `n`: show only the new items, or all of them again.
+    fn toggle_new_only(&mut self) {
+        self.new_only = !self.new_only;
+        if self.new_only {
+            let since = date::format_utc(self.last_check);
+            let on_libraries = self.tab == Tab::Library && self.lib_stack.len() == 1;
+            if on_libraries {
+                self.info(format!(
+                    "New items only (since {since}): open a library to see them"
+                ));
+            } else {
+                self.info(format!("New items only (since {since})"));
+            }
+            self.refresh_new_set();
+        } else {
+            self.info("All items");
+        }
+        self.sync_filter();
+    }
+
+    /// `N` confirmed: the last check is now. Nothing is new any more.
+    fn mark_seen(&mut self) {
+        self.last_check = date::now();
+        self.new_set = NewSet::empty(self.last_check);
+        self.save_state();
+        self.info(format!(
+            "Last check set to {}",
+            date::format_utc(self.last_check)
+        ));
+        self.sync_filter();
     }
 
     fn new_view(&mut self, title: impl Into<String>, source: Source) -> ListView {
@@ -338,33 +450,43 @@ impl App {
         select: Option<usize>,
     ) {
         let req = v.begin_load(start, kind, select);
-        let (api, tx, source, view, sort) =
-            (api.clone(), tx.clone(), v.source.clone(), v.id, v.sort);
+        let (api, tx, source, view, sort, since) = (
+            api.clone(),
+            tx.clone(),
+            v.source.clone(),
+            v.id,
+            v.sort,
+            v.new_since,
+        );
         tokio::spawn(async move {
-            let result = match source {
-                Source::Libraries => api.views().await.map(|items| QueryResult {
-                    total_record_count: items.len(),
-                    items,
-                }),
-                Source::Children {
-                    parent_id,
-                    collection_type,
-                } => {
-                    api.children(
-                        &parent_id,
-                        collection_type.as_deref(),
-                        sort,
-                        start,
-                        PAGE_SIZE,
-                    )
-                    .await
+            let result = if let Some(since) = since {
+                super::new_items::load(&api, source, sort, since).await
+            } else {
+                match source {
+                    Source::Libraries => api.views().await.map(|items| QueryResult {
+                        total_record_count: items.len(),
+                        items,
+                    }),
+                    Source::Children {
+                        parent_id,
+                        collection_type,
+                    } => {
+                        api.children(
+                            &parent_id,
+                            collection_type.as_deref(),
+                            sort,
+                            start,
+                            PAGE_SIZE,
+                        )
+                        .await
+                    }
+                    Source::Seasons { series_id } => api.seasons(&series_id).await,
+                    Source::Episodes {
+                        series_id,
+                        season_id,
+                    } => api.episodes(&series_id, &season_id).await,
+                    Source::Search { term } => api.search(&term).await,
                 }
-                Source::Seasons { series_id } => api.seasons(&series_id).await,
-                Source::Episodes {
-                    series_id,
-                    season_id,
-                } => api.episodes(&series_id, &season_id).await,
-                Source::Search { term } => api.search(&term).await,
             };
             let _ = tx.send(AppEvent::Page {
                 view,
@@ -396,7 +518,7 @@ impl App {
         let Some(v) = self.current_view_mut() else {
             return;
         };
-        if v.loading() && v.source.is_paged() {
+        if v.loading() && v.paged() {
             return;
         }
         let target = page(v);
@@ -407,6 +529,7 @@ impl App {
 
     /// Reload the current list. Paged lists reload the page of the selection.
     fn reload(&mut self) {
+        self.refresh_new_set();
         if self.tab != Tab::Library {
             self.run_search();
             return;
@@ -414,7 +537,7 @@ impl App {
         let idx = self.lib_stack.len() - 1;
         let v = &mut self.lib_stack[idx];
         v.clear_marks();
-        let (start, select) = if v.source.is_paged() {
+        let (start, select) = if v.paged() {
             let abs = v.offset + v.state.selected().unwrap_or(0);
             (v.current_page() * PAGE_SIZE, Some(abs))
         } else {
@@ -456,12 +579,7 @@ impl App {
         }
         v.sort = sort;
         self.sort = sort;
-        if let Some(path) = &self.state_file {
-            let s = super::state::UiState { sort };
-            if let Err(e) = super::state::save(path, &s) {
-                tracing::warn!("cannot save the sort: {e:#}");
-            }
-        }
+        self.save_state();
         self.info(format!("Sorted by {}", sort.label()));
         self.load(self.lib_stack.len() - 1, 0, LoadKind::Replace, None);
     }
@@ -547,6 +665,10 @@ impl App {
                     _ => {}
                 }
             }
+            // A reply for an older last check is dropped.
+            AppEvent::NewSet(Ok(set)) if set.since == self.last_check => self.new_set = set,
+            AppEvent::NewSet(Ok(_)) => {}
+            AppEvent::NewSet(Err(e)) => tracing::warn!("cannot find the new items: {e}"),
             AppEvent::Mgr(MgrEvent::MaxParallel(n)) => self.max_parallel = n,
         }
     }
@@ -748,6 +870,7 @@ impl App {
             _ if self.tab == Tab::Downloads => self.on_downloads_key(k),
             _ => self.on_list_key(k),
         }
+        self.sync_filter();
     }
 
     fn switch_tab(&mut self, d: i32) {
@@ -765,6 +888,11 @@ impl App {
             Popup::Help => {}
             Popup::Sort { cursor, descending } => self.on_sort_key(cursor, descending, k),
             Popup::ConfirmQuit => self.quit = yes,
+            Popup::ConfirmMarkSeen => {
+                if yes {
+                    self.mark_seen();
+                }
+            }
             Popup::ConfirmEnqueue { jobs, .. } => {
                 if yes {
                     self.info(format!("Queued {} download(s)", jobs.len()));
@@ -864,6 +992,8 @@ impl App {
                 }
             }
             KeyCode::Char('d') => self.download(),
+            KeyCode::Char('n') => self.toggle_new_only(),
+            KeyCode::Char('N') => self.popup = Some(Popup::ConfirmMarkSeen),
             KeyCode::Char('r') => self.reload(),
             KeyCode::Char('s') => self.open_sort_menu(),
             KeyCode::Char('o') => {
@@ -934,6 +1064,7 @@ impl App {
         };
         let mut view = self.new_view(title, source);
         view.sort = self.sort;
+        view.new_since = self.wanted_filter(&view);
         self.lib_stack.push(view);
         self.tab = Tab::Library;
         self.load(self.lib_stack.len() - 1, 0, LoadKind::Replace, None);

@@ -12,6 +12,8 @@ use crate::api::Sort;
 pub struct UiState {
     /// Last sort used in a library list.
     pub sort: Sort,
+    /// Last check for new items, in Unix seconds. Items added after it are new.
+    pub last_check: Option<i64>,
 }
 
 /// Load the saved state. A missing or bad file gives the defaults.
@@ -52,6 +54,7 @@ mod tests {
                 field: SortField::DateAdded,
                 descending: true,
             },
+            last_check: Some(1_700_000_000),
         };
         save(&path, &s).unwrap();
         assert_eq!(load(&path), s);

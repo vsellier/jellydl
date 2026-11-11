@@ -69,6 +69,8 @@ pub struct ListView {
     pub title: String,
     pub source: Source,
     pub sort: Sort,
+    /// `Some(last check)` when the list shows only the items new since then.
+    pub new_since: Option<i64>,
     pub items: Vec<BaseItem>,
     pub offset: usize,
     pub total: usize,
@@ -88,6 +90,7 @@ impl ListView {
             title: title.into(),
             source,
             sort: Sort::default(),
+            new_since: None,
             items: Vec::new(),
             offset: 0,
             total: 0,
@@ -102,6 +105,12 @@ impl ListView {
 
     pub fn loading(&self) -> bool {
         self.pending.is_some()
+    }
+
+    /// True when the list is loaded one page at a time. A list of new items
+    /// comes in one piece.
+    pub fn paged(&self) -> bool {
+        self.source.is_paged() && self.new_since.is_none()
     }
 
     pub fn selected(&self) -> Option<&BaseItem> {
@@ -206,7 +215,7 @@ impl ListView {
 
     /// True when the user is near the end of the loaded items and more exist.
     pub fn wants_next_page(&self) -> bool {
-        self.source.is_paged()
+        self.paged()
             && !self.loading()
             && self.offset + self.items.len() < self.total
             && self.state.selected().unwrap_or(0) + 20 >= self.items.len()
@@ -214,7 +223,7 @@ impl ListView {
 
     /// True when the user is near the start of the loaded items and some come before.
     pub fn wants_prev_page(&self) -> bool {
-        self.source.is_paged()
+        self.paged()
             && !self.loading()
             && self.offset > 0
             && self.state.selected().unwrap_or(0) < 20
@@ -237,7 +246,7 @@ impl ListView {
         let page = page.min(self.page_count() - 1);
         let start = page * PAGE_SIZE;
         let end = self.offset + self.items.len();
-        if !self.source.is_paged() || (start >= self.offset && start < end) {
+        if !self.paged() || (start >= self.offset && start < end) {
             self.show_abs(start);
             return PageAction::Shown;
         }

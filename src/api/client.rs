@@ -13,7 +13,8 @@ use super::models::{AuthResult, BaseItem, Person, QueryResult, User};
 use super::sort::Sort;
 use crate::config::{Auth, Config};
 
-const LIST_FIELDS: &str = "MediaSources,ProductionYear,Overview,Path,ChildCount,DateCreated";
+pub(super) const LIST_FIELDS: &str =
+    "MediaSources,ProductionYear,Overview,Path,ChildCount,DateCreated";
 
 /// Build the shared reqwest client, with proxy, TLS options and extra headers.
 pub fn build_http(cfg: &Config) -> Result<Client> {
@@ -180,7 +181,19 @@ impl Jellyfin {
         format!("{}/Items/{item_id}/Download", self.base)
     }
 
-    async fn get<T: DeserializeOwned>(&self, path: &str, query: &[(&str, &str)]) -> Result<T> {
+    pub(super) async fn get_items(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<QueryResult> {
+        self.get(path, query).await
+    }
+
+    pub(super) async fn get<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        query: &[(&str, &str)],
+    ) -> Result<T> {
         let res = self
             .http
             .get(format!("{}{path}", self.base))

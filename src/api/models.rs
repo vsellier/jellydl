@@ -25,6 +25,8 @@ pub struct BaseItem {
     pub child_count: Option<i32>,
     pub container: Option<String>,
     pub path: Option<String>,
+    /// Folder that holds the item. Asked only when finding new items.
+    pub parent_id: Option<String>,
     pub media_sources: Option<Vec<MediaSource>>,
     pub people: Option<Vec<Person>>,
 }
@@ -111,6 +113,16 @@ impl BaseItem {
     /// Date part ("2024-03-01") of an ISO date such as "2024-03-01T12:00:00.0000000Z".
     pub fn date_added(&self) -> Option<&str> {
         Some(date_part(self.date_created.as_deref()?))
+    }
+
+    /// When the item was added to the server, in Unix seconds.
+    pub fn added_at(&self) -> Option<i64> {
+        super::date::parse_iso(self.date_created.as_deref()?)
+    }
+
+    /// True when the item was added to the server after `t` (Unix seconds).
+    pub fn added_after(&self, t: i64) -> bool {
+        self.added_at().is_some_and(|a| a > t)
     }
 
     pub fn release_date(&self) -> Option<&str> {

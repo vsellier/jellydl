@@ -285,8 +285,8 @@ Older versions of jellydl put the files in a folder by type, first with spaces i
 jellydl still finds these files: it shows them as downloaded and does not download them again.
 A download in progress is written to `<file>.part`, then renamed.
 
-The queue, log and device id are in `~/.local/share/jellydl/`
-(`queue.json`, `jellydl.log`, `device_id`). Set `JELLYDL_LOG=debug` for more logs.
+The queue, log, device id, and UI state (sort and last check) are in `~/.local/share/jellydl/`
+(`queue.json`, `jellydl.log`, `device_id`, `ui_state.json`). Set `JELLYDL_LOG=debug` for more logs.
 
 ## Keys
 
@@ -303,8 +303,16 @@ The queue, log and device id are in `~/.local/share/jellydl/`
 | `[` `]` / `{` `}` | previous / next page, first / last page (100 items per page) |
 | `s` | sort menu: name, date added, release date, rating, runtime; ascending or descending |
 | `o` | reverse the sort order |
+| `n` | show only the items added since the last check, or all items again. The list of libraries is not filtered |
+| `N` | mark all as seen: set the last check to now (asks first) |
 | `?` | help |
 | `q` | quit (asks first if downloads are active; the queue is saved) |
+
+A movie or episode is new when it was added to the server after the last check.
+A series, season or folder is new when it holds a new file.
+New items have a `new` tag in the lists.
+The last check moves only when you press `N`.
+At the first start, it is set to the start time, so nothing is new yet.
 
 Downloads tab:
 

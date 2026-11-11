@@ -14,7 +14,7 @@ use ratatui_image::{FilterType, Resize, StatefulImage};
 use super::app::{App, Cast, Popup, Poster, PosterCache, Tab, downloaded_path};
 use super::fmt;
 use super::view::ListView;
-use crate::api::{BaseItem, SortField};
+use crate::api::{BaseItem, NewSet, SortField, date};
 use crate::download::{JobState, Totals};
 use crate::paths;
 
@@ -36,7 +36,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     }
     draw_status(f, app, status);
     if let Some(p) = &app.popup {
-        draw_popup(f, p);
+        draw_popup(f, p, app.last_check);
     }
 }
 
@@ -79,6 +79,7 @@ fn draw_library(f: &mut Frame, app: &mut App, area: Rect) {
         // An image under a popup could stay on screen.
         show_poster: app.popup.is_none(),
         dir: &dir,
+        new: &app.new_set,
     };
     if let Some(v) = app.lib_stack.last_mut() {
         draw_list_and_detail(f, v, ctx, area, spin);
@@ -120,6 +121,7 @@ fn draw_search(f: &mut Frame, app: &mut App, area: Rect) {
         posters: &mut app.posters,
         show_poster: app.popup.is_none(),
         dir: &dir,
+        new: &app.new_set,
     };
     draw_list_and_detail(f, &mut app.search, ctx, rest, spin);
 }
@@ -147,6 +149,10 @@ fn draw_list_and_detail(f: &mut Frame, v: &mut ListView, ctx: DetailCtx, area: R
             if let Some(n) = it.child_count.filter(|_| !it.is_playable()) {
                 spans.push(Span::styled(format!("  ({n})"), Style::new().dark_gray()));
             }
+            // In a list of new items only, every row is new: no tag.
+            if v.new_since.is_none() && ctx.new.is_new(it) {
+                spans.push(Span::styled("  new", Style::new().fg(Color::Green).bold()));
+            }
             ListItem::new(Line::from(spans))
         })
         .collect();
@@ -163,6 +169,9 @@ fn draw_list_and_detail(f: &mut Frame, v: &mut ListView, ctx: DetailCtx, area: R
     }
     if v.source.is_paged() {
         title.push_str(&format!("· {} ", v.sort.label()));
+    }
+    if let Some(t) = v.new_since {
+        title.push_str(&format!("· new since {} ", date::format_utc(t)));
     }
     if v.loading() {
         title.push_str(spin);
@@ -211,6 +220,7 @@ struct DetailCtx<'a> {
     posters: &'a mut PosterCache,
     show_poster: bool,
     dir: &'a std::path::Path,
+    new: &'a NewSet,
 }
 
 /// The poster is shown only when the pane has at least this many rows inside.
@@ -610,7 +620,7 @@ fn centered(area: Rect, w: u16, h: u16) -> Rect {
     r
 }
 
-fn draw_popup(f: &mut Frame, p: &Popup) {
+fn draw_popup(f: &mut Frame, p: &Popup, last_check: i64) {
     let (title, lines, w): (&str, Vec<Line>, u16) = match p {
         Popup::Help => (" Help ", help_lines(), 64),
         Popup::Sort { cursor, descending } => (" Sort by ", sort_lines(*cursor, *descending), 40),
@@ -623,6 +633,16 @@ fn draw_popup(f: &mut Frame, p: &Popup) {
                 Line::from("y / Enter: quit     any other key: stay").bold(),
             ],
             56,
+        ),
+        Popup::ConfirmMarkSeen => (
+            " Mark all as seen? ",
+            vec![
+                Line::from(format!("Last check: {}.", date::format_utc(last_check))),
+                Line::from("Set it to now: the new items are no longer new."),
+                Line::default(),
+                Line::from("y / Enter: set it to now     any other key: cancel").bold(),
+            ],
+            60,
         ),
         Popup::ConfirmEnqueue {
             jobs,
@@ -722,6 +742,8 @@ fn help_lines() -> Vec<Line<'static>> {
         ("[ ] / { }", "previous / next page, first / last page"),
         ("s", "sort menu (library and folder lists)"),
         ("o", "reverse the sort order"),
+        ("n", "show only new items / show all"),
+        ("N", "mark all as seen (last check = now)"),
         ("", ""),
         ("Downloads tab", ""),
         ("p Space", "pause / resume"),
@@ -764,6 +786,56 @@ mod tests {
         }
     }
 
+    /// Draw a list of two movies, one added after the last check.
+    fn render_list(new_since: Option<i64>) -> Vec<String> {
+        use super::super::view::Source;
+        let mut term = Terminal::new(TestBackend::new(100, 10)).unwrap();
+        let mut v = ListView::new(1, "Movies", Source::Libraries);
+        let mut old = movie();
+        old.name = "Old Film".into();
+        old.date_created = Some("2024-01-01T00:00:00Z".into());
+        let mut new = movie();
+        new.id = "m2".into();
+        new.name = "New Film".into();
+        new.date_created = Some("2024-06-01T00:00:00Z".into());
+        v.items = vec![old, new];
+        v.new_since = new_since;
+        let (cast, mut posters) = (HashMap::new(), PosterCache::default());
+        let set = NewSet::empty(date::parse_iso("2024-03-01T00:00:00Z").unwrap());
+        term.draw(|f| {
+            let ctx = DetailCtx {
+                cast: &cast,
+                posters: &mut posters,
+                show_poster: false,
+                dir: std::path::Path::new("/tmp/x"),
+                new: &set,
+            };
+            draw_list_and_detail(f, &mut v, ctx, f.area(), "");
+        })
+        .unwrap();
+        let buf = term.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn new_items_get_a_tag() {
+        let lines = render_list(None);
+        let row = |name: &str| lines.iter().find(|l| l.contains(name)).unwrap().clone();
+        assert!(row("New Film").contains("new"), "{lines:#?}");
+        assert!(!row("Old Film").contains("new"), "{lines:#?}");
+
+        // A list of new items only: no tag, the title says since when.
+        let lines = render_list(Some(0));
+        assert!(
+            lines[0].contains("new since 1970-01-01 00:00 UTC"),
+            "{lines:#?}"
+        );
+        let row = lines.iter().find(|l| l.contains("New Film")).unwrap();
+        assert!(!row.contains("  new"), "{row}");
+    }
+
     /// Draw the details pane and return the screen as text lines.
     fn render(posters: &mut PosterCache, show_poster: bool) -> Vec<String> {
         let mut term = Terminal::new(TestBackend::new(70, 40)).unwrap();
@@ -775,6 +847,7 @@ mod tests {
                 posters,
                 show_poster,
                 dir: std::path::Path::new("/tmp/x"),
+                new: &NewSet::empty(0),
             };
             draw_detail(f, Some(&it), ctx, f.area());
         })
