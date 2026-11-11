@@ -22,6 +22,9 @@ pub fn save(path: &Path, jobs: &[Job]) -> Result<()> {
 }
 
 /// Load the saved queue. Jobs that were running become queued again.
+///
+/// Progress is not saved while a download runs, so the downloaded size of an
+/// unfinished job comes from its `.part` file.
 pub fn load(path: &Path) -> Result<Vec<Job>> {
     if !path.exists() {
         return Ok(Vec::new());
@@ -32,6 +35,9 @@ pub fn load(path: &Path) -> Result<Vec<Job>> {
     for j in &mut jobs {
         if j.state == JobState::Running {
             j.state = JobState::Queued;
+        }
+        if j.state != JobState::Done {
+            j.downloaded = std::fs::metadata(j.part_path()).map_or(0, |m| m.len());
         }
     }
     Ok(jobs)
@@ -50,7 +56,7 @@ mod tests {
             item_id: format!("i{id}"),
             title: "t".into(),
             url: "http://x".into(),
-            target: "/tmp/a.mkv".into(),
+            target: dir.path().join(format!("{id}.mkv")),
             expected_size: Some(5),
             state,
             downloaded: 2,
@@ -59,6 +65,7 @@ mod tests {
             speed: 3.0,
             retry: 0,
         };
+        std::fs::write(mk(3, JobState::Paused).part_path(), b"abc").unwrap();
         save(
             &f,
             &[
@@ -72,6 +79,8 @@ mod tests {
         assert_eq!(jobs.len(), 2);
         assert_eq!(jobs[0].state, JobState::Queued);
         assert_eq!(jobs[0].speed, 0.0);
+        assert_eq!(jobs[0].downloaded, 0, "no .part file");
         assert_eq!(jobs[1].state, JobState::Paused);
+        assert_eq!(jobs[1].downloaded, 3, "size of the .part file");
     }
 }

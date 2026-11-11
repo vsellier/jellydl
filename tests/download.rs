@@ -528,3 +528,41 @@ async fn cancel_removes_a_queued_download() {
     assert!(!waiting.exists());
     assert!(!part(&waiting).exists(), "x removes the partial file");
 }
+
+#[tokio::test]
+async fn clear_right_after_cancel_still_removes_the_part_file() {
+    let server = MockServer::start().await;
+    let body = data(50_000);
+    mount_file(
+        &server,
+        "a",
+        FileResponder {
+            data: body.clone(),
+            ranges: true,
+            delay: Duration::from_millis(500),
+        },
+    )
+    .await;
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("a.mkv");
+    std::fs::write(part(&target), &body[..10_000]).unwrap();
+
+    let mut h = Harness::new(1);
+    h.mgr.send(Command::Enqueue(vec![job(
+        &server,
+        "a",
+        dir.path(),
+        Some(50_000),
+    )]));
+    h.wait_state(1, JobState::Running).await;
+    // The clear arrives before the worker has stopped.
+    h.mgr.send(Command::Cancel(1));
+    h.mgr.send(Command::ClearFinished);
+    for _ in 0..50 {
+        if !part(&target).exists() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(!part(&target).exists(), "cancel removes the partial file");
+}

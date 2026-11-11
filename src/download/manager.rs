@@ -197,10 +197,16 @@ impl Manager {
         self.jobs.iter_mut().find(|j| j.id == id)
     }
 
-    fn emit(&mut self, id: u64) {
+    /// Send the job to the UI.
+    fn notify(&self, id: u64) {
         if let Some(j) = self.jobs.iter().find(|j| j.id == id) {
             let _ = self.events.send(Event::Updated(j.clone()));
         }
+    }
+
+    /// Send the job to the UI, and save the queue at the next tick.
+    fn emit(&mut self, id: u64) {
+        self.notify(id);
         self.dirty = true;
     }
 
@@ -293,6 +299,9 @@ impl Manager {
                     .jobs
                     .iter()
                     .filter(|j| matches!(j.state, JobState::Done | JobState::Canceled))
+                    // A canceled job stays until its worker has stopped: its .part
+                    // file is removed at that time.
+                    .filter(|j| !self.running.contains_key(&j.id))
                     .map(|j| j.id)
                     .collect();
                 self.jobs.retain(|j| !gone.contains(&j.id));
@@ -321,7 +330,8 @@ impl Manager {
                     j.total = total.or(j.total);
                     j.speed = speed;
                     j.retry = retry;
-                    self.emit(id);
+                    // Progress alone does not save the queue: the .part file has it.
+                    self.notify(id);
                 }
             }
             WorkerMsg::Finished { id, result } => {
