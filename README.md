@@ -443,6 +443,47 @@ cargo audit      # dependencies with known vulnerabilities (cargo install cargo-
 The `Audit` GitHub workflow runs `cargo audit` when the dependencies change, and every Monday.
 A release also stops if a dependency has a known vulnerability.
 
+### Dependency reviews (cargo vet)
+
+[cargo vet](https://mozilla.github.io/cargo-vet/) makes sure that a person reviewed each dependency.
+Each crate in `Cargo.lock` must have one of these:
+
+- an audit in `supply-chain/audits.toml`: we read the code of this version, or the diff from an audited version;
+- an audit imported from Mozilla (`[imports.mozilla]` in `supply-chain/config.toml`);
+- an exemption in `supply-chain/config.toml`: not reviewed yet. The first setup exempted all the crates.
+
+Normal dependencies need `safe-to-deploy`: jellydl reads data from the Jellyfin server and, with `--serve`,
+requests from the network. Dev-dependencies need only `safe-to-run`.
+
+```sh
+cargo install cargo-vet
+cargo vet --locked        # the CI check: offline, uses supply-chain/imports.lock
+cargo vet                 # fetch the imported audits again and update imports.lock
+cargo vet suggest         # the crates to review, smallest review first
+```
+
+When you add or update a dependency, `cargo vet` fails until the new version is reviewed:
+
+```sh
+cargo vet diff <crate> <audited version> <new version>   # read the diff, when an audited version exists
+cargo vet inspect <crate> <version>                      # or read the full source
+cargo vet certify <crate> [<audited version>] <version>  # then record the audit
+cargo vet prune                                          # remove the exemptions that are not needed now
+```
+
+`diff` and `inspect` show the code that is published on crates.io, not the code in the Git repository.
+Add `--mode=local` to read it on your machine.
+
+Rules for an audit:
+
+- An audit says that **you** read the code. Other projects can import our audits and trust it.
+- If only a tool or an LLM read the code, do not record `safe-to-deploy`. Keep the exemption.
+- A `NOTE: mozilla trusts <publisher>` line in `cargo vet suggest` is not an audit. It applies only if you
+  run `cargo vet trust <crate> <publisher>`. Then you accept each new release of this publisher without a review.
+
+The `Audit` GitHub workflow runs `cargo vet --locked` when `Cargo.lock` or `supply-chain/` changes.
+A release also stops if a dependency is not audited or exempted.
+
 ## Release
 
 Before the first release, turn on immutable releases: on GitHub, open **Settings** > **General** >

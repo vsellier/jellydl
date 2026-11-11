@@ -1,16 +1,22 @@
-# Check the dependencies against the RustSec advisory database.
+# Check the dependencies.
 #
-# The job fails when a dependency has a known vulnerability. Other advisories
-# (unmaintained or unsound crates) are shown as warnings.
-# It runs every week too: new advisories appear for code that did not change.
+# - audit: the RustSec advisory database. The job fails when a dependency has a
+#   known vulnerability. Other advisories (unmaintained or unsound crates) are
+#   shown as warnings. It runs every week too: new advisories appear for code
+#   that did not change.
+# - vet: each dependency must be audited (by us or by an imported auditor such
+#   as Mozilla, see supply-chain/) or exempted. When it fails, see
+#   `cargo vet suggest`, then `cargo vet certify` or add an exemption.
+#   --locked uses supply-chain/imports.lock and does not fetch the imports:
+#   run `cargo vet` locally to update them.
 
 name: Audit
 
 on:
   push:
-    paths: ["Cargo.toml", "Cargo.lock", ".github/workflows/audit.yml"]
+    paths: ["Cargo.toml", "Cargo.lock", "supply-chain/**", ".github/workflows/audit.yml"]
   pull_request:
-    paths: ["Cargo.toml", "Cargo.lock"]
+    paths: ["Cargo.toml", "Cargo.lock", "supply-chain/**"]
   schedule:
     - cron: "0 6 * * 1" # Monday 06:00 UTC
   workflow_dispatch:
@@ -27,3 +33,12 @@ jobs:
         with:
           tool: cargo-audit
       - run: cargo audit
+
+  vet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-vet@0.10.3
+      - run: cargo vet --locked

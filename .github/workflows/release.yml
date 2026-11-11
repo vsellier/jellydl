@@ -48,6 +48,11 @@ jobs:
           tool: cargo-audit
       # No release with a dependency that has a known vulnerability.
       - run: cargo audit
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-vet@0.10.3
+      # No release with a dependency that is not audited or exempted.
+      - run: cargo vet --locked
 
   build:
     needs: [test, checks]

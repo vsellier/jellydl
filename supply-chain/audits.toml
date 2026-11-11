@@ -1,0 +1,19 @@
+
+# cargo-vet audits file
+
+[[audits.aho-corasick]]
+who = "vsellier <559100+vsellier@users.noreply.github.com>"
+criteria = "safe-to-deploy"
+version = "1.1.5"
+notes = "Audited with the help of claude opus 5.5"
+
+[[audits.axum]]
+who = "vsellier <559100+vsellier@users.noreply.github.com>"
+criteria = "safe-to-deploy"
+version = "0.8.9"
+notes = "Audited with the help of claude opus 5.5"
+
+[[audits.equivalent]]
+who = "vsellier <559100+vsellier@users.noreply.github.com>"
+criteria = "safe-to-deploy"
+version = "1.0.3"
