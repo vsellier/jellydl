@@ -21,6 +21,7 @@ A terminal app to browse and search a Jellyfin library and download videos.
 - The queue is saved. Downloads that were running when you quit resume at the next start.
 - Proxy support: HTTP, HTTPS, SOCKS5 and SOCKS5h, with or without a username and password.
 - Login with a username and password, or with an API key.
+- A web interface (`--serve`) for a NAS or a server: browse, search, download and follow the queue from a browser.
 
 ## Legal and responsible use
 
@@ -257,6 +258,29 @@ To type less, add an alias to your shell config:
 alias jellydl='docker run --rm -it --user "$(id -u):$(id -g)" -e TERM -e TERM_PROGRAM -v ~/jellydl/config:/config:ro -v ~/jellydl/data:/data -v ~/Videos/jellyfin:/downloads ghcr.io/vsellier/jellydl:latest'
 ```
 
+### Web interface on a NAS
+
+Run jellydl as a service, with the web interface:
+
+```sh
+docker run -d --name jellydl --restart unless-stopped --user "$(id -u):$(id -g)" \
+  -e JELLYDL_LISTEN=0.0.0.0:8080 -p 127.0.0.1:8080:8080 \
+  -v ~/jellydl/config:/config:ro \
+  -v ~/jellydl/data:/data \
+  -v /volume1/video:/downloads \
+  jellydl --serve
+```
+
+- `JELLYDL_LISTEN=0.0.0.0:8080` makes jellydl listen on all addresses in the container.
+  `-p 127.0.0.1:8080:8080` publishes the port only on the NAS itself: a reverse proxy on the NAS
+  can reach it, other machines cannot.
+- `docker stop jellydl` saves the queue. Downloads continue at the next start.
+- With folders by type, use paths in the container: for example
+  `movies_dir = "/downloads/Films"` and `series_ended_dir = "/downloads/Séries terminées"`.
+  To use other disks, mount them too (`-v /volume2/series:/series`) and use these paths.
+
+See [Web interface](#web-interface) about the login.
+
 ### Check the image
 
 Each published image has a signed build provenance attestation, like the archives:
@@ -264,6 +288,30 @@ Each published image has a signed build provenance attestation, like the archive
 ```sh
 gh attestation verify oci://ghcr.io/vsellier/jellydl:<version> --repo vsellier/jellydl
 ```
+
+## Web interface
+
+```sh
+jellydl --serve                         # http://127.0.0.1:8080/
+jellydl --serve --listen 0.0.0.0:8080   # or JELLYDL_LISTEN=0.0.0.0:8080
+```
+
+The web interface does the same things as the terminal interface:
+
+- The first screen shows `New movies`, `New 4K movies`, `New series`, then the libraries.
+- Open a library, a series or a season. Sort the library lists. Search.
+- Click a video to see its details, its cast, and where it is (or will be) on disk.
+- Select videos (the box at the top left of a poster) and download them, or download a whole
+  folder, series or season with `Download all`.
+- The `Downloads` tab shows the queue live: pause, resume, cancel, retry, number of parallel downloads.
+
+The terminal and the web interface use the same config, folders and queue. Run only one of them at a time.
+
+**There is no login.** Anyone who can open the page can start downloads with your Jellyfin account.
+By default jellydl listens only on `127.0.0.1`. To use it from other machines, put a reverse proxy
+with authentication in front of it (for example Caddy or nginx with basic auth, or an SSO proxy).
+The page uses server-sent events (`/api/events`): turn off response buffering for this path in the proxy
+(nginx: `proxy_buffering off;`).
 
 ## Files on disk
 

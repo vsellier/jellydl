@@ -1,0 +1,655 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>jellydl</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%237c5cff'/><path d='M16 7v13m-6-6 6 6 6-6M9 25h14' stroke='white' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>">
+<style>
+:root {
+  --bg: #0f1115; --panel: #171a21; --panel-2: #1f232c; --line: #2a2f3a;
+  --text: #e7e9ee; --muted: #9aa1ae; --accent: #7c5cff; --accent-2: #a48bff;
+  --ok: #3ecf8e; --warn: #f5a524; --err: #f25f5c; --shadow: 0 10px 30px rgba(0,0,0,.35);
+  --radius: 12px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --panel-2: #eef0f4; --line: #dde1e8;
+    --text: #1b1f27; --muted: #5f6775; --accent: #6544ff; --accent-2: #5236e0;
+    --shadow: 0 10px 30px rgba(20,25,40,.12);
+    color-scheme: light;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button { font: inherit; color: inherit; cursor: pointer; }
+a { color: var(--accent-2); }
+
+header { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--bg) 88%, transparent);
+  backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+.bar { max-width: 1400px; margin: 0 auto; display: flex; align-items: center; gap: 16px; padding: 10px 16px; }
+.logo { font-weight: 700; letter-spacing: .3px; display: flex; align-items: center; gap: 8px; }
+.logo i { width: 22px; height: 22px; border-radius: 6px; background: var(--accent); display: inline-block; }
+nav { display: flex; gap: 4px; }
+nav button { white-space: nowrap; background: none; border: 0; padding: 7px 12px; border-radius: 8px; color: var(--muted); font-weight: 600; }
+nav button.on { background: var(--panel-2); color: var(--text); }
+.badge { display: inline-block; min-width: 18px; padding: 0 6px; margin-left: 6px; border-radius: 9px;
+  background: var(--accent); color: #fff; font-size: 12px; line-height: 18px; text-align: center; }
+.badge:empty { display: none; }
+.spacer { flex: 1; }
+.speed { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13px; }
+
+main { max-width: 1400px; margin: 0 auto; padding: 16px; }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 14px; min-height: 36px; }
+.crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; font-weight: 600; font-size: 17px; }
+.crumbs button { background: none; border: 0; padding: 2px 4px; color: var(--muted); border-radius: 6px; }
+.crumbs button:hover { color: var(--text); background: var(--panel-2); }
+.crumbs span.sep { color: var(--muted); }
+.crumbs .cur { padding: 2px 4px; }
+.btn { background: var(--panel-2); border: 1px solid var(--line); padding: 7px 12px; border-radius: 8px; font-weight: 600; white-space: nowrap; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: var(--accent-2); }
+.btn.small { padding: 4px 9px; font-size: 13px; }
+.btn:disabled { opacity: .5; cursor: default; }
+select, input[type=search] { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 10px; }
+input[type=search] { width: min(560px, 100%); font-size: 16px; padding: 10px 14px; }
+input[type=search]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 18px 14px; }
+.card { position: relative; cursor: pointer; border-radius: var(--radius); }
+.card .pic { position: relative; aspect-ratio: 2/3; border-radius: var(--radius); overflow: hidden; background: var(--panel-2);
+  border: 1px solid var(--line); transition: transform .12s ease, box-shadow .12s ease; }
+.card.wide .pic { aspect-ratio: 16/9; }
+.card:hover .pic { transform: translateY(-2px); box-shadow: var(--shadow); }
+/* The image covers the placeholder; the placeholder shows while it loads or when it fails. */
+.pic img, .thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+.ph { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-weight: 700;
+  font-size: 13px; letter-spacing: 1px; text-align: center; padding: 8px; }
+.ph.big { font-size: 15px; color: var(--text); background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 35%, var(--panel-2)), var(--panel-2)); }
+.card .t { margin-top: 7px; font-weight: 600; font-size: 14px; line-height: 1.3; overflow: hidden; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.card .s { color: var(--muted); font-size: 12.5px; }
+.tags { position: absolute; right: 6px; top: 6px; display: flex; gap: 4px; z-index: 1; }
+.tag { font-size: 11px; font-weight: 700; padding: 2px 6px; border-radius: 6px; background: rgba(0,0,0,.65); color: #fff; }
+.tag.ok { background: var(--ok); color: #062b1b; }
+.tag.k4 { background: var(--warn); color: #2b1a00; }
+.check { position: absolute; z-index: 1; left: 6px; top: 6px; width: 24px; height: 24px; border-radius: 7px; border: 2px solid #fff;
+  background: rgba(0,0,0,.45); display: none; place-items: center; color: #fff; font-size: 14px; font-weight: 800; }
+.card:hover .check, .card.sel .check, body.selecting .card .check { display: grid; }
+.card.sel .check { background: var(--accent); border-color: var(--accent); }
+.card.sel .pic { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+.rows { display: flex; flex-direction: column; gap: 6px; }
+.row { display: flex; align-items: center; gap: 12px; padding: 8px; border-radius: 10px; background: var(--panel);
+  border: 1px solid var(--line); cursor: pointer; }
+.row:hover { border-color: var(--muted); }
+.row.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+.row .thumb { width: 128px; aspect-ratio: 16/9; border-radius: 7px; overflow: hidden; background: var(--panel-2); flex: none; position: relative; }
+.row .info { flex: 1; min-width: 0; }
+.row .t { font-weight: 600; }
+.row .s { color: var(--muted); font-size: 13px; }
+.row .ov { color: var(--muted); font-size: 13px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.row input { width: 18px; height: 18px; accent-color: var(--accent); }
+
+.more { display: flex; justify-content: center; padding: 20px; color: var(--muted); }
+.empty { color: var(--muted); padding: 40px 0; text-align: center; }
+.spin { width: 22px; height: 22px; border: 3px solid var(--line); border-top-color: var(--accent); border-radius: 50%;
+  animation: r 0.8s linear infinite; margin: 30px auto; }
+@keyframes r { to { transform: rotate(360deg); } }
+
+.selbar { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 30; display: none; gap: 10px;
+  align-items: center; background: var(--panel); border: 1px solid var(--line); box-shadow: var(--shadow);
+  border-radius: 12px; padding: 8px 10px 8px 16px; }
+body.selecting .selbar { display: flex; }
+
+/* Details drawer */
+.scrim { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 40; display: none; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 100%); background: var(--panel); z-index: 41;
+  border-left: 1px solid var(--line); box-shadow: var(--shadow); transform: translateX(100%); transition: transform .18s ease;
+  display: flex; flex-direction: column; }
+body.detail .scrim { display: block; }
+body.detail .drawer { transform: none; }
+.drawer .head { display: flex; justify-content: flex-end; padding: 10px; }
+.drawer .body { overflow: auto; padding: 0 22px 28px; }
+.drawer .top { display: flex; gap: 16px; }
+.drawer .top img { width: 150px; border-radius: 10px; border: 1px solid var(--line); align-self: flex-start; }
+.drawer h2 { margin: 0 0 6px; font-size: 21px; line-height: 1.25; }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 3px 12px; font-size: 13.5px; margin: 8px 0; }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; overflow-wrap: anywhere; }
+.drawer .actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.drawer p.ov { white-space: pre-wrap; }
+.path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; color: var(--muted); overflow-wrap: anywhere; }
+.cast { display: flex; flex-wrap: wrap; gap: 6px; }
+.cast span { background: var(--panel-2); border-radius: 7px; padding: 3px 8px; font-size: 13px; }
+.cast span em { color: var(--muted); font-style: normal; }
+h3 { font-size: 14px; color: var(--muted); text-transform: uppercase; letter-spacing: .6px; margin: 20px 0 8px; }
+
+/* Downloads */
+.jobs { display: flex; flex-direction: column; gap: 8px; }
+.job { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; }
+.job .l1 { display: flex; align-items: center; gap: 10px; }
+.job .title { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job .st { font-size: 12px; font-weight: 700; padding: 2px 7px; border-radius: 6px; background: var(--panel-2); text-transform: uppercase; }
+.job .st.running { background: color-mix(in srgb, var(--accent) 30%, var(--panel-2)); }
+.job .st.done { background: var(--ok); color: #062b1b; }
+.job .st.failed { background: var(--err); color: #fff; }
+.job .st.paused { background: var(--warn); color: #2b1a00; }
+.prog { height: 6px; background: var(--panel-2); border-radius: 4px; overflow: hidden; margin: 8px 0 5px; }
+.prog i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
+.job.done .prog i { background: var(--ok); }
+.job .l2 { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.job .err { color: var(--err); font-size: 13px; margin-top: 4px; }
+.job .acts { display: flex; gap: 6px; }
+.par { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 14px; }
+
+.toasts { position: fixed; right: 16px; bottom: 16px; z-index: 60; display: flex; flex-direction: column; gap: 8px; }
+.toast { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--accent); box-shadow: var(--shadow);
+  padding: 10px 14px; border-radius: 9px; max-width: 380px; }
+.toast.err { border-left-color: var(--err); }
+.hidden { display: none !important; }
+
+@media (max-width: 640px) {
+  .bar { gap: 6px; padding: 8px 10px; }
+  .logo span { display: none; }
+  nav button { padding: 7px 9px; }
+  .speed { display: none; }
+  .grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 14px 10px; }
+  .drawer .top { flex-direction: column; }
+  .row .thumb { width: 90px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <div class="logo"><i></i><span>jellydl</span></div>
+    <nav>
+      <button data-tab="library" class="on">Library</button>
+      <button data-tab="search">Search</button>
+      <button data-tab="downloads">Downloads<span class="badge" id="dlcount"></span></button>
+    </nav>
+    <div class="spacer"></div>
+    <div class="speed" id="speed"></div>
+  </div>
+</header>
+
+<main>
+  <section id="tab-library">
+    <div class="toolbar">
+      <div class="crumbs" id="crumbs"></div>
+      <div class="spacer"></div>
+      <div id="sortbox" class="hidden">
+        <select id="sort" aria-label="Sort">
+          <option value="name">Name</option>
+          <option value="date_added">Date added</option>
+          <option value="release_date">Release date</option>
+          <option value="rating">Rating</option>
+          <option value="runtime">Runtime</option>
+        </select>
+        <button class="btn" id="order" title="Reverse the order">↑</button>
+      </div>
+      <button class="btn" id="dlall">Download all</button>
+    </div>
+    <div id="lib"></div>
+  </section>
+
+  <section id="tab-search" class="hidden">
+    <div class="toolbar"><input type="search" id="q" placeholder="Search movies, series, episodes…" autocomplete="off"></div>
+    <div id="results"></div>
+  </section>
+
+  <section id="tab-downloads" class="hidden">
+    <div class="toolbar">
+      <div class="crumbs"><span class="cur">Downloads</span></div>
+      <div class="spacer"></div>
+      <div class="par">Parallel
+        <button class="btn small" data-q="less">−</button><b id="par">–</b><button class="btn small" data-q="more">+</button>
+      </div>
+      <button class="btn" data-q="pause-all">Pause all</button>
+      <button class="btn" data-q="resume-all">Resume all</button>
+      <button class="btn" data-q="clear">Clear finished</button>
+    </div>
+    <div class="jobs" id="jobs"></div>
+  </section>
+</main>
+
+<div class="selbar">
+  <b id="selcount"></b>
+  <button class="btn" id="selclear">Clear</button>
+  <button class="btn primary" id="seldl">Download</button>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" aria-label="Details">
+  <div class="head"><button class="btn small" id="close">Close ✕</button></div>
+  <div class="body" id="detail"></div>
+</aside>
+
+<div class="toasts" id="toasts"></div>
+
+<script>
+"use strict";
+const $ = (s, el = document) => el.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function bytes(n) {
+  if (n == null) return "?";
+  const u = ["B", "KB", "MB", "GB", "TB"]; let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return (i ? n.toFixed(n < 10 ? 1 : 0) : n) + " " + u[i];
+}
+function dur(s) {
+  if (s == null) return "";
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = Math.floor(s % 60);
+  return h ? `${h}h${String(m).padStart(2, "0")}` : m ? `${m}m${String(x).padStart(2, "0")}` : `${x}s`;
+}
+
+function toast(msg, err = false) {
+  const t = document.createElement("div");
+  t.className = "toast" + (err ? " err" : "");
+  t.textContent = msg;
+  $("#toasts").append(t);
+  setTimeout(() => t.remove(), err ? 7000 : 3500);
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, opts);
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).error || msg; } catch {}
+    throw new Error(msg);
+  }
+  return r.status === 204 ? null : r.json();
+}
+const post = (path, body) => api(path, {
+  method: "POST",
+  headers: body ? { "Content-Type": "application/json" } : {},
+  body: body ? JSON.stringify(body) : undefined,
+});
+
+/* ---------------------------------------------------------------- tabs */
+let tab = "library";
+function showTab(t) {
+  tab = t;
+  document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.tab === t));
+  for (const n of ["library", "search", "downloads"]) $("#tab-" + n).classList.toggle("hidden", n !== t);
+  clearSel();
+  if (t === "search") $("#q").focus();
+}
+document.querySelectorAll("nav button").forEach(b => b.onclick = () => showTab(b.dataset.tab));
+
+/* ----------------------------------------------------------- selection */
+const sel = new Map();
+function updateSel() {
+  document.body.classList.toggle("selecting", sel.size > 0);
+  $("#selcount").textContent = `${sel.size} selected`;
+  document.querySelectorAll("[data-id]").forEach(el => {
+    const on = sel.has(el.dataset.id);
+    el.classList.toggle("sel", on);
+    const cb = el.querySelector("input[type=checkbox]");
+    if (cb) cb.checked = on;
+  });
+}
+function toggleSel(it) {
+  if (sel.has(it.id)) sel.delete(it.id); else sel.set(it.id, it);
+  updateSel();
+}
+function clearSel() { sel.clear(); updateSel(); }
+$("#selclear").onclick = clearSel;
+$("#seldl").onclick = () => download([...sel.values()]);
+
+/* ------------------------------------------------------------ download */
+async function download(items) {
+  items = items.filter(i => i.playable || i.container);
+  if (!items.length) return;
+  const folders = items.filter(i => i.container);
+  if (folders.length) {
+    const names = folders.map(f => f.label).slice(0, 3).join(", ") + (folders.length > 3 ? "…" : "");
+    if (!confirm(`Download every video inside: ${names}?`)) return;
+  }
+  try {
+    const r = await post("/api/download", { ids: items.map(i => i.id) });
+    clearSel();
+    if (r.queued === 0) toast(r.skipped ? "Nothing to do: already downloaded or in the queue" : "Nothing to download here");
+    else toast(`Queued ${r.queued} download(s), ${bytes(r.size)}${r.unknown_size ? " + " + r.unknown_size + " of unknown size" : ""}` +
+      (r.skipped ? `. Skipped ${r.skipped}` : ""));
+  } catch (e) { toast("Cannot download: " + e.message, true); }
+}
+
+/* --------------------------------------------------------- item views */
+const poster = it => `/api/items/${encodeURIComponent(it.id)}/poster`;
+function sub(it) {
+  const p = [];
+  if (it.type === "Episode" || it.type === "Season") { if (it.added) p.push("added " + it.added); }
+  else if (it.year) p.push(it.year);
+  if (it.child_count != null && it.container) p.push(it.child_count + " items");
+  if (it.runtime_min && it.playable) p.push(it.runtime_min + " min");
+  if (it.size && it.playable) p.push(bytes(it.size));
+  return p.join(" · ");
+}
+function tags(it) {
+  let h = "";
+  if (it.is_4k) h += `<span class="tag k4">4K</span>`;
+  if (it.downloaded) h += `<span class="tag ok">✓</span>`;
+  return h;
+}
+function placeholder(it) {
+  if (it.type === "Latest") return `<div class="ph big">${esc(it.name)}</div>`;
+  if (!it.poster) return `<div class="ph big">${esc(it.name)}</div>`;
+  return `<div class="ph">${esc(it.tag.trim())}</div>`;
+}
+function img(it) {
+  return it.poster
+    ? `<img loading="lazy" alt="" src="${poster(it)}" onerror="this.remove()">`
+    : "";
+}
+
+function renderItems(box, items, append) {
+  const rows = items.length && items.every(i => i.type === "Episode");
+  let wrap = box.querySelector(rows ? ".rows" : ".grid");
+  if (!append || !wrap) {
+    box.innerHTML = "";
+    wrap = document.createElement("div");
+    wrap.className = rows ? "rows" : "grid";
+    box.append(wrap);
+  }
+  for (const it of items) {
+    const el = document.createElement("div");
+    el.dataset.id = it.id;
+    const selectable = it.playable || it.container;
+    if (rows) {
+      el.className = "row";
+      el.innerHTML = `${selectable ? `<input type="checkbox" aria-label="Select">` : ""}
+        <div class="thumb">${placeholder(it)}${img(it)}</div>
+        <div class="info"><div class="t">${esc(it.label)}</div><div class="s">${esc(sub(it))}</div>
+        ${it.overview ? `<div class="ov">${esc(it.overview)}</div>` : ""}</div>
+        <div class="tags" style="position:static">${tags(it)}</div>`;
+      const cb = el.querySelector("input");
+      if (cb) cb.onclick = e => { e.stopPropagation(); toggleSel(it); };
+    } else {
+      el.className = "card" + (it.type === "Latest" || it.type === "CollectionFolder" || it.type === "UserView" ? " wide" : "");
+      el.innerHTML = `<div class="pic">${placeholder(it)}${img(it)}<div class="tags">${tags(it)}</div>
+        ${selectable ? `<div class="check" title="Select">✓</div>` : ""}</div>
+        ${it.poster ? `<div class="t">${esc(it.name)}</div><div class="s">${esc(sub(it))}</div>` : ""}`;
+      const ck = el.querySelector(".check");
+      if (ck) ck.onclick = e => { e.stopPropagation(); toggleSel(it); };
+    }
+    el.onclick = e => {
+      if (sel.size && selectable) { toggleSel(it); return; }
+      if (it.open) push(it.label, it.open, it);
+      else showDetail(it);
+    };
+    wrap.append(el);
+  }
+  updateSel();
+}
+
+/* --------------------------------------------------------------- library */
+const stack = [];            // [{title, spec, items, total, item}]
+let sort = { field: "name", desc: false };
+let loading = false;
+
+function query(spec, start) {
+  const p = new URLSearchParams({ src: spec.src, start: start || 0 });
+  for (const k of ["id", "ct", "series", "q"]) if (spec[k]) p.set(k, spec[k]);
+  if (spec.paged) { p.set("sort", sort.field); p.set("desc", sort.desc); }
+  return "/api/list?" + p;
+}
+
+function push(title, spec, item) {
+  if (tab !== "library") showTab("library");
+  stack.push({ title, spec, items: [], total: 0, item });
+  history.pushState({ depth: stack.length }, "");
+  clearSel();
+  loadTop(false);
+}
+let skipPop = false;         // the next popstate comes from closeDetail()
+window.onpopstate = () => {
+  if (skipPop) { skipPop = false; return; }
+  if ($("body").classList.contains("detail")) { closeDetail(true); return; }
+  if (stack.length > 1) { stack.pop(); clearSel(); drawLibrary(); window.scrollTo(0, 0); }
+};
+function goto(depth) {
+  const n = stack.length - 1 - depth;
+  if (n > 0) history.go(-n);
+}
+
+function drawCrumbs() {
+  $("#crumbs").innerHTML = stack.map((v, i) => i === stack.length - 1
+    ? `<span class="cur">${esc(v.title)}</span>`
+    : `<button data-d="${i}">${esc(v.title)}</button><span class="sep">›</span>`).join("");
+  $("#crumbs").querySelectorAll("button").forEach(b => b.onclick = () => goto(+b.dataset.d));
+  const top = stack[stack.length - 1];
+  $("#sortbox").classList.toggle("hidden", !top.spec.paged);
+  $("#order").textContent = sort.desc ? "↓" : "↑";
+  $("#sort").value = sort.field;
+  $("#dlall").classList.toggle("hidden", !["children", "seasons", "episodes", "latest"].includes(top.spec.src));
+}
+
+function drawLibrary() {
+  drawCrumbs();
+  const top = stack[stack.length - 1];
+  const box = $("#lib");
+  if (!top.items.length) {
+    box.innerHTML = loading ? `<div class="spin"></div>` : `<div class="empty">Nothing here</div>`;
+  } else {
+    renderItems(box, top.items, false);
+  }
+  drawMore();
+}
+function drawMore() {
+  const top = stack[stack.length - 1];
+  $("#lib").querySelector(".more")?.remove();
+  if (top.items.length && top.items.length < top.total) {
+    const m = document.createElement("div");
+    m.className = "more";
+    m.innerHTML = loading ? `<div class="spin" style="margin:0"></div>` : `${top.items.length} of ${top.total}`;
+    $("#lib").append(m);
+    moreObserver.observe(m);
+  }
+}
+const moreObserver = new IntersectionObserver(es => {
+  if (es.some(e => e.isIntersecting)) loadTop(true);
+}, { rootMargin: "600px" });
+
+async function loadTop(more) {
+  const top = stack[stack.length - 1];
+  if (loading || (more && top.items.length >= top.total)) return;
+  loading = true;
+  if (!more) { top.items = []; top.total = 0; drawLibrary(); }
+  else drawMore();
+  try {
+    const r = await api(query(top.spec, more ? top.items.length : 0));
+    if (stack[stack.length - 1] !== top) return;
+    top.items.push(...r.items);
+    top.total = r.total;
+    loading = false;
+    if (more) { renderItems($("#lib"), r.items, true); drawMore(); }
+    else drawLibrary();
+  } catch (e) {
+    toast("Cannot load the list: " + e.message, true);
+  } finally {
+    loading = false;
+    if (stack[stack.length - 1] === top) drawMore();
+  }
+}
+
+$("#sort").onchange = () => { sort.field = $("#sort").value; loadTop(false); };
+$("#order").onclick = () => { sort.desc = !sort.desc; loadTop(false); };
+$("#dlall").onclick = () => {
+  const top = stack[stack.length - 1];
+  if (top.spec.src === "latest") { download(top.items); return; }
+  if (top.spec.src === "episodes" || top.spec.src === "seasons") { download(top.items); return; }
+  download([{ id: top.spec.id, label: top.title, container: true }]);
+};
+
+/* ---------------------------------------------------------------- search */
+let searchTimer, searchSeq = 0;
+$("#q").oninput = () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(runSearch, 350);
+};
+$("#q").onkeydown = e => { if (e.key === "Enter") { clearTimeout(searchTimer); runSearch(); } };
+async function runSearch() {
+  const term = $("#q").value.trim();
+  const seq = ++searchSeq;
+  if (!term) { $("#results").innerHTML = ""; return; }
+  $("#results").innerHTML = `<div class="spin"></div>`;
+  try {
+    const r = await api(query({ src: "search", q: term }));
+    if (seq !== searchSeq) return;
+    if (!r.items.length) $("#results").innerHTML = `<div class="empty">No result for “${esc(term)}”</div>`;
+    else renderItems($("#results"), r.items, false);
+  } catch (e) { toast("Search failed: " + e.message, true); }
+}
+
+/* --------------------------------------------------------------- details */
+async function showDetail(it) {
+  const kv = [];
+  const add = (k, v) => { if (v != null && v !== "") kv.push(`<dt>${k}</dt><dd>${esc(v)}</dd>`); };
+  add("Type", it.type);
+  add("Year", it.year);
+  add("Released", it.released);
+  add("Added", it.added);
+  add("Runtime", it.runtime_min ? it.runtime_min + " min" : null);
+  add("Rating", it.rating ? it.rating.toFixed(1) : null);
+  add("Items", it.container ? it.child_count : null);
+  if (it.playable) { add("Size", bytes(it.size)); add("Format", it.format + (it.is_4k ? " · 4K" : "")); }
+  const disk = it.playable
+    ? (it.downloaded
+      ? `<h3>On disk ✓</h3><div class="path">${esc(it.downloaded)}</div>`
+      : `<h3>Save to</h3><div class="path">${esc(it.target)}</div>`)
+    : "";
+  const acts = [];
+  if (it.playable && !it.downloaded) acts.push(`<button class="btn primary" id="d-dl">Download</button>`);
+  if (it.container && it.type !== "Latest") acts.push(`<button class="btn primary" id="d-dl">Download all</button>`);
+  $("#detail").innerHTML = `
+    <div class="top">
+      ${it.poster ? `<img alt="" src="${poster(it)}" onerror="this.remove()">` : ""}
+      <div><h2>${esc(it.label)}</h2><dl class="kv">${kv.join("")}</dl></div>
+    </div>
+    <div class="actions">${acts.join("")}</div>
+    ${disk}
+    ${it.overview ? `<h3>Overview</h3><p class="ov">${esc(it.overview)}</p>` : ""}
+    <div id="d-cast"></div>`;
+  $("#d-dl")?.addEventListener("click", () => { download([it]); });
+  if (!$("body").classList.contains("detail")) history.pushState({ detail: true }, "");
+  document.body.classList.add("detail");
+  if (["Movie", "Series", "Season", "Episode", "Video"].includes(it.type)) {
+    try {
+      const people = await api(`/api/items/${encodeURIComponent(it.id)}/people`);
+      const by = k => people.filter(p => k.includes(p.Type));
+      const sec = (title, list, role) => list.length
+        ? `<h3>${title}</h3><div class="cast">${list.slice(0, 30).map(p =>
+          `<span>${esc(p.Name)}${role && p.Role ? ` <em>${esc(p.Role)}</em>` : ""}</span>`).join("")}</div>` : "";
+      $("#d-cast") && ($("#d-cast").innerHTML =
+        sec("Directed by", by(["Director"])) + sec("Written by", by(["Writer"])) + sec("Cast", by(["Actor", "GuestStar"]), true));
+    } catch {}
+  }
+}
+function closeDetail(fromPop) {
+  if (!document.body.classList.contains("detail")) return;
+  document.body.classList.remove("detail");
+  if (!fromPop) { skipPop = true; history.back(); }
+}
+$("#close").onclick = () => closeDetail();
+$("#scrim").onclick = () => closeDetail();
+document.addEventListener("keydown", e => {
+  if (e.key === "Escape") { if (document.body.classList.contains("detail")) closeDetail(); else clearSel(); }
+  if (e.key === "/" && document.activeElement.tagName !== "INPUT") { e.preventDefault(); showTab("search"); }
+});
+
+/* ------------------------------------------------------------- downloads */
+const jobs = new Map();
+let par = null;
+function drawJobs() {
+  const list = [...jobs.values()].sort((a, b) => a.id - b.id);
+  const active = list.filter(j => ["queued", "running", "paused"].includes(j.state.toLowerCase()));
+  $("#dlcount").textContent = active.length || "";
+  const speed = list.filter(j => j.state === "Running").reduce((s, j) => s + j.speed, 0);
+  $("#speed").textContent = speed > 0 ? `↓ ${bytes(speed)}/s` : "";
+  $("#par").textContent = par ?? "–";
+  if (tab !== "downloads" && document.hidden) return;
+  const box = $("#jobs");
+  if (!list.length) { box.innerHTML = `<div class="empty">No download yet</div>`; return; }
+  box.innerHTML = list.map(j => {
+    const st = j.state.toLowerCase();
+    const pct = j.total ? Math.min(100, j.downloaded / j.total * 100) : (st === "done" ? 100 : 0);
+    const info = [
+      j.total ? `${bytes(j.downloaded)} / ${bytes(j.total)} (${pct.toFixed(0)}%)` : bytes(j.downloaded),
+      st === "running" && j.speed ? `${bytes(j.speed)}/s` : "",
+      j.eta != null ? `${dur(j.eta)} left` : "",
+      j.retry ? `retry ${j.retry}` : "",
+    ].filter(Boolean);
+    const a = [];
+    if (st === "running" || st === "queued") a.push(["pause", "Pause"]);
+    if (st === "paused") a.push(["resume", "Resume"]);
+    if (st === "failed" || st === "canceled") a.push(["retry", "Retry"]);
+    if (st === "running") a.push(["cancel", "Cancel"]);
+    else if (st !== "done") a.push(["remove", "Remove"]);
+    return `<div class="job ${st}">
+      <div class="l1"><span class="st ${st}">${esc(st)}</span><span class="title" title="${esc(j.target)}">${esc(j.title)}</span>
+      <span class="acts">${a.map(([k, l]) => `<button class="btn small" data-j="${j.id}" data-a="${k}">${l}</button>`).join("")}</span></div>
+      <div class="prog"><i style="width:${pct}%"></i></div>
+      <div class="l2">${info.map(esc).map(s => `<span>${s}</span>`).join("")}<span class="path">${esc(j.target)}</span></div>
+      ${j.error && st !== "done" ? `<div class="err">${esc(j.error)}</div>` : ""}
+    </div>`;
+  }).join("");
+}
+$("#jobs").onclick = async e => {
+  const b = e.target.closest("button[data-j]");
+  if (!b) return;
+  if (b.dataset.a === "cancel" || b.dataset.a === "remove") {
+    if (!confirm("Stop this download and delete the partial file?")) return;
+  }
+  try { await post(`/api/jobs/${b.dataset.j}/${b.dataset.a}`); } catch (err) { toast(err.message, true); }
+};
+document.querySelectorAll("[data-q]").forEach(b => b.onclick = async () => {
+  try { await post(`/api/queue/${b.dataset.q}`); } catch (err) { toast(err.message, true); }
+});
+
+let drawPending = false;
+function scheduleJobs() {
+  if (drawPending) return;
+  drawPending = true;
+  requestAnimationFrame(() => { drawPending = false; drawJobs(); });
+}
+async function reloadJobs() {
+  try {
+    const r = await api("/api/jobs");
+    jobs.clear();
+    for (const j of r.jobs) jobs.set(j.id, j);
+    par = r.max_parallel;
+    scheduleJobs();
+  } catch (e) { toast("Cannot load the downloads: " + e.message, true); }
+}
+function listen() {
+  const es = new EventSource("/api/events");
+  es.onopen = reloadJobs;
+  es.onmessage = m => {
+    const ev = JSON.parse(m.data);
+    if (ev.type === "job") {
+      const old = jobs.get(ev.job.id);
+      jobs.set(ev.job.id, ev.job);
+      if (old && old.state !== "Done" && ev.job.state === "Done") toast("Downloaded: " + ev.job.title);
+      if (old && old.state !== "Failed" && ev.job.state === "Failed") toast("Failed: " + ev.job.title, true);
+    } else if (ev.type === "removed") jobs.delete(ev.id);
+    else if (ev.type === "parallel") par = ev.value;
+    else if (ev.type === "reload") { reloadJobs(); return; }
+    scheduleJobs();
+  };
+}
+
+/* ------------------------------------------------------------------ start */
+stack.push({ title: "Libraries", spec: { src: "libraries" }, items: [], total: 0 });
+history.replaceState({ depth: 1 }, "");
+loadTop(false);
+listen();
+</script>
+</body>
+</html>

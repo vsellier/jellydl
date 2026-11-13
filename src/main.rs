@@ -35,6 +35,13 @@ struct Cli {
     /// Log in, list the libraries, then exit. Use it to test auth and proxy.
     #[arg(long)]
     check: bool,
+    /// Run the web interface instead of the terminal interface.
+    #[arg(long)]
+    serve: bool,
+    /// Address of the web interface. There is no login: keep it local, or put
+    /// a reverse proxy with authentication in front.
+    #[arg(long, env = "JELLYDL_LISTEN", default_value = "127.0.0.1:8080")]
+    listen: std::net::SocketAddr,
 }
 
 #[tokio::main]
@@ -138,16 +145,7 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&cfg.download_dir)
         .with_context(|| format!("cannot create {}", cfg.download_dir.display()))?;
 
-    let (tx, rx) = mpsc::unbounded_channel();
     let (mgr_tx, mut mgr_rx) = mpsc::unbounded_channel();
-    let fwd = tx.clone();
-    tokio::spawn(async move {
-        while let Some(ev) = mgr_rx.recv().await {
-            if fwd.send(AppEvent::Mgr(ev)).is_err() {
-                break;
-            }
-        }
-    });
     let mgr = download::spawn(
         ManagerConfig {
             client: http,
@@ -164,6 +162,30 @@ async fn main() -> Result<()> {
         mgr_tx,
     );
 
+    if cli.serve {
+        let res = jellydl::web::serve(
+            jf,
+            mgr.clone(),
+            mgr_rx,
+            cfg.layout.clone(),
+            cfg.max_parallel,
+            cli.listen,
+        )
+        .await;
+        eprintln!("Saving the download queue...");
+        mgr.shutdown().await;
+        return res;
+    }
+
+    let (tx, rx) = mpsc::unbounded_channel();
+    let fwd = tx.clone();
+    tokio::spawn(async move {
+        while let Some(ev) = mgr_rx.recv().await {
+            if fwd.send(AppEvent::Mgr(ev)).is_err() {
+                break;
+            }
+        }
+    });
     let ui = App::new(
         jf,
         tx,

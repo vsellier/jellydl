@@ -383,6 +383,25 @@ impl DownloadLayout {
     }
 }
 
+/// True when `target` is a complete file (its size is `expected`, when known).
+pub fn on_disk(target: &Path, expected: Option<u64>) -> bool {
+    std::fs::metadata(target).is_ok_and(|m| expected.is_none_or(|e| e == m.len()))
+}
+
+/// The complete file of `it` on disk, where jellydl saves it now or where
+/// older versions saved it.
+pub fn downloaded_path(
+    it: &BaseItem,
+    layout: &DownloadLayout,
+    info: Option<&SeriesInfo>,
+) -> Option<PathBuf> {
+    let expected = it.size();
+    layout
+        .candidates(it, info)
+        .into_iter()
+        .find(|p| on_disk(p, expected))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

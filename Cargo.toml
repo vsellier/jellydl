@@ -28,6 +28,7 @@ fastrand = "2"
 ratatui-image = { version = "11.1.0", default-features = false, features = ["crossterm"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 deunicode = "1.6.2"
+axum = { version = "0.8", default-features = false, features = ["tokio", "http1", "json", "query"] }
 
 [dev-dependencies]
 wiremock = "0.6"

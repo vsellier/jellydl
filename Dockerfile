@@ -6,6 +6,8 @@
 #   /data       queue, log, session   (XDG_DATA_HOME)
 #   /downloads  downloaded files
 #
+# Web interface: add --serve, set JELLYDL_LISTEN=0.0.0.0:8080 and publish the port.
+#
 # Two final stages:
 #   default     builds jellydl from source:   docker build -t jellydl .
 #   release     uses binaries built before (CI): dist/<arch>/jellydl
@@ -43,6 +45,8 @@ ENV HOME=/home/jellydl \
     XDG_DATA_HOME=/data
 USER 1000:1000
 VOLUME ["/config", "/data", "/downloads"]
+# Web interface (jellydl --serve), when JELLYDL_LISTEN=0.0.0.0:8080.
+EXPOSE 8080
 LABEL org.opencontainers.image.title="jellydl" \
       org.opencontainers.image.description="Terminal app to browse a Jellyfin library and download videos"
 
