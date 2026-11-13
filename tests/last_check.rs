@@ -54,7 +54,16 @@ async fn app(server: &MockServer, dir: &std::path::Path, state_file: std::path::
         mgr_tx,
     );
     let (tx, _rx) = mpsc::unbounded_channel();
-    App::new(jf, tx, mgr, dir.join("dl"), None, 1, None).with_state_file(state_file)
+    App::new(
+        jf,
+        tx,
+        mgr,
+        jellydl::paths::DownloadLayout::single(dir.join("dl")),
+        None,
+        1,
+        None,
+    )
+    .with_state_file(state_file)
 }
 
 fn key(c: char) -> KeyEvent {

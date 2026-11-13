@@ -96,6 +96,9 @@ async fn main() -> Result<()> {
                 .unwrap_or("none (environment variables apply)")
         );
         println!("Download dir: {}", cfg.download_dir.display());
+        println!("Movies:       {}", cfg.layout.movies_dir.display());
+        println!("Series:       {}", cfg.layout.series_ongoing_dir.display());
+        println!("Series ended: {}", cfg.layout.series_ended_dir.display());
         println!("User-Agent:   {}", cfg.user_agent);
         println!("Auth header:  {}", jf.identity.header(Some("<token>")));
         for (k, v) in &cfg.headers {
@@ -165,7 +168,7 @@ async fn main() -> Result<()> {
         jf,
         tx,
         mgr.clone(),
-        cfg.download_dir.clone(),
+        cfg.layout.clone(),
         proxy_label,
         cfg.max_parallel,
         cfg.max_speed,
