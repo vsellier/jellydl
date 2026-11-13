@@ -942,6 +942,10 @@ impl App {
                 self.run_search();
             }
             KeyCode::Esc | KeyCode::Down => self.search_editing = false,
+            // Ctrl+N: next line, as Down.
+            KeyCode::Char('n') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.search_editing = false
+            }
             // Other Ctrl keys do nothing while typing: Ctrl+Q must not ask to quit.
             KeyCode::Char(_) => {}
             _ => return false,
