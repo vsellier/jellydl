@@ -884,31 +884,16 @@ impl App {
             })
             .map(|j| j.item_id.as_str())
             .collect();
-        let mut seen = HashSet::new();
-        let (mut jobs, mut skipped, mut size, mut unknown_size) = (Vec::new(), 0, 0u64, 0);
-        for it in items.into_iter().filter(|i| i.is_playable()) {
-            if busy.contains(it.id.as_str()) || !seen.insert(it.id.clone()) {
-                skipped += 1;
-                continue;
-            }
-            let target = self.target_of(&it);
-            let expected = it.size();
-            if downloaded_path(&it, &self.layout, self.series_info_of(&it)).is_some() {
-                skipped += 1;
-                continue;
-            }
-            match expected {
-                Some(s) => size += s,
-                None => unknown_size += 1,
-            }
-            jobs.push(NewJob {
-                url: self.api.download_url(&it.id),
-                title: it.label(),
-                item_id: it.id,
-                target,
-                expected_size: expected,
+        let plan =
+            crate::download::plan::plan(items, &busy, &self.layout, &self.series_info, |id| {
+                self.api.download_url(id)
             });
-        }
+        let crate::download::plan::Plan {
+            jobs,
+            skipped,
+            size,
+            unknown_size,
+        } = plan;
         match jobs.len() {
             0 if skipped > 0 => self.info("Nothing to do: already downloaded or in the queue"),
             0 => self.info("Nothing to download here"),
@@ -1236,23 +1221,7 @@ impl App {
     }
 }
 
-pub fn on_disk(target: &std::path::Path, expected: Option<u64>) -> bool {
-    std::fs::metadata(target).is_ok_and(|m| expected.is_none_or(|e| e == m.len()))
-}
-
-/// The complete file of `it` on disk, where jellydl saves it now or where
-/// older versions saved it.
-pub fn downloaded_path(
-    it: &BaseItem,
-    layout: &DownloadLayout,
-    info: Option<&SeriesInfo>,
-) -> Option<PathBuf> {
-    let expected = it.size();
-    layout
-        .candidates(it, info)
-        .into_iter()
-        .find(|p| on_disk(p, expected))
-}
+pub use crate::paths::{downloaded_path, on_disk};
 
 /// Run the TUI until the user quits.
 pub async fn run(
