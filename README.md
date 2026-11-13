@@ -296,7 +296,7 @@ The queue, log, device id, and UI state (sort and last check) are in `~/.local/s
 | `↑` `↓` / `j` `k`, `PgUp` `PgDn`, `g` `G` | move |
 | `Enter` / `→` | open the selected item |
 | `Esc` / `←` / `Backspace` | go back |
-| `/` | search. In the search box: `←` `→`, `Home` `End`, `Ctrl+A` `Ctrl+E` move the cursor, `Del` deletes the next character |
+| `/` | search. In the search box: readline keys (see below) |
 | `d` | download the selected video, or the marked videos. On a folder or library: all the videos inside |
 | `Space` / `a` | mark one item / mark all |
 | `r` | reload the list |
@@ -310,6 +310,21 @@ The queue, log, device id, and UI state (sort and last check) are in `~/.local/s
 
 The first screen starts with three entries, `New movies`, `New 4K movies` and `New series`.
 Each one lists the 100 latest additions of the server, newest first (4K = a video stream of about 3840 pixels wide or more).
+
+Text boxes (the search box) support the readline keys:
+
+| Key | Action |
+|---|---|
+| `Ctrl+A` `Ctrl+E` / `Home` `End` | start / end of the line |
+| `Ctrl+B` `Ctrl+F` / `←` `→` | one character left / right |
+| `Alt+B` `Alt+F` / `Ctrl+←` `Ctrl+→` | one word left / right |
+| `Ctrl+H` / `Backspace`, `Ctrl+D` / `Del` | delete the character before / after the cursor |
+| `Ctrl+W` / `Alt+Backspace`, `Alt+D` | delete the word before / after the cursor |
+| `Ctrl+U`, `Ctrl+K` | delete to the start / to the end of the line |
+| `Ctrl+Y` | paste the text deleted by the last `Ctrl+W`, `Ctrl+U`, `Ctrl+K` or `Alt+D` |
+| `Ctrl+T` | swap the two characters around the cursor |
+| `Alt+U` `Alt+L` `Alt+C` | upper case, lower case, capitalize the next word |
+| `Ctrl+N`, `Enter`, `Esc` | leave the box |
 
 A movie or episode is new when it was added to the server after the last check.
 A series, season or folder is new when it holds a new file.
