@@ -280,6 +280,34 @@ For example: `Elodie.2001/Elodie.2001.mkv`, `Garden.Diaries/S01/Garden.Diaries.S
 
 Jellyfin and Plex read the title, year and number (`S01E03`) from these names, so you can add the folder to a media server.
 
+### Folders by type, and names from the server
+
+By default everything goes to `download_dir` with the clean names above. You can split the downloads:
+
+```toml
+download_dir       = "~/Videos/jellyfin"          # everything that is not set below
+movies_dir         = "~/Videos/Movies"
+series_ongoing_dir = "~/Videos/Series"            # series that still get new episodes
+series_ended_dir   = "~/Videos/Series (ended)"    # finished series
+naming             = "server"                     # default: "clean"
+```
+
+With `naming = "server"`, jellydl keeps the file name that the server has:
+
+```text
+<movies_dir>/Wicked Partie II 2025.mkv
+<series_dir>/Ted Lasso (2020)/S01/Ted.Lasso.S01E01.MULTi.VFi.WiTH.AD.1080p.WEBRip.AC3.5.1.H265-TARDiS.mkv
+```
+
+Only the characters that a file system does not accept are changed. The series folder is
+`Name (Year)`, with the year that Jellyfin has for the series. If the server has no file name,
+jellydl builds one from the title and the year.
+
+A series goes to `series_ended_dir` when Jellyfin says its status is `Ended`, and to `series_ongoing_dir`
+when it is `Continuing` or unknown. A series that already has a folder in one of the two
+folders stays there, even if its status changed. Move the folder yourself when a series ends.
+jellydl looks in all the folders to know if a file is already downloaded.
+
 Older versions of jellydl put the files in a folder by type, first with spaces in the names
 (`Elodie (2001)`), then with dots (`Elodie.2001`).
 jellydl still finds these files: it shows them as downloaded and does not download them again.

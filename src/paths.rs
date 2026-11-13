@@ -208,6 +208,181 @@ fn legacy_target_for(item: &BaseItem, root: &Path) -> PathBuf {
     }
 }
 
+/// How files and series folders are named.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Naming {
+    /// Letters, digits, dashes and dots only: `Garden.Diaries.S01E03.Pilot.mkv`.
+    #[default]
+    Clean,
+    /// The file name on the server, and `Series (Year)` folders.
+    Server,
+}
+
+impl Naming {
+    pub fn parse(s: &str) -> Option<Self> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "clean" => Some(Self::Clean),
+            "server" => Some(Self::Server),
+            _ => None,
+        }
+    }
+}
+
+/// What jellydl needs to know about a series to place its episodes.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SeriesInfo {
+    pub year: Option<i32>,
+    /// `Some(true)`: no new episode will come. `None`: the server does not say.
+    pub ended: Option<bool>,
+}
+
+impl SeriesInfo {
+    pub fn from_item(it: &BaseItem) -> Self {
+        Self {
+            year: it.production_year,
+            ended: it
+                .status
+                .as_deref()
+                .map(|s| s.eq_ignore_ascii_case("ended")),
+        }
+    }
+}
+
+/// The folders where downloads go, and how they are named.
+#[derive(Debug, Clone)]
+pub struct DownloadLayout {
+    /// Other videos, and everything that has no folder of its own.
+    pub default_dir: PathBuf,
+    pub movies_dir: PathBuf,
+    pub series_ongoing_dir: PathBuf,
+    pub series_ended_dir: PathBuf,
+    pub naming: Naming,
+}
+
+impl DownloadLayout {
+    /// One folder for everything.
+    pub fn single(dir: PathBuf) -> Self {
+        Self {
+            movies_dir: dir.clone(),
+            series_ongoing_dir: dir.clone(),
+            series_ended_dir: dir.clone(),
+            default_dir: dir,
+            naming: Naming::Clean,
+        }
+    }
+
+    /// Folder (and name) a series is saved in, under its root.
+    fn series_folder(&self, it: &BaseItem, naming: Naming, info: Option<&SeriesInfo>) -> String {
+        let name = it.series_name.as_deref().unwrap_or("Unknown");
+        match naming {
+            Naming::Clean => clean_name(name),
+            Naming::Server => {
+                let base = legacy_sanitize(name);
+                match info.and_then(|i| i.year) {
+                    Some(y) if !base.ends_with(&format!("({y})")) => format!("{base} ({y})"),
+                    _ => base,
+                }
+            }
+        }
+    }
+
+    /// Name of the file, from the server or built from the metadata.
+    fn file_name(&self, it: &BaseItem, naming: Naming) -> String {
+        let ext = extension(it);
+        if naming == Naming::Server {
+            let src = it.media_sources.as_ref().and_then(|m| m.first());
+            let from_server = src
+                .and_then(|s| s.path.as_deref())
+                .or(it.path.as_deref())
+                .and_then(|p| p.rsplit(['/', '\\']).next())
+                .and_then(|f| Path::new(f).file_stem())
+                .and_then(|f| f.to_str())
+                .map(legacy_sanitize)
+                .filter(|f| f != "_");
+            if let Some(stem) = from_server {
+                return format!("{stem}.{ext}");
+            }
+            let fallback = match it.item_type.as_str() {
+                "Episode" => legacy_sanitize(&it.label().replace(" · ", " ")),
+                _ => legacy_sanitize(&it.name_with_year()),
+            };
+            return format!("{fallback}.{ext}");
+        }
+        dotted_path(it, "Unknown")
+            .file_name()
+            .map(|f| f.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    }
+
+    /// Path of `it` under its root, for one naming.
+    fn relative(&self, it: &BaseItem, naming: Naming, info: Option<&SeriesInfo>) -> PathBuf {
+        match it.item_type.as_str() {
+            "Episode" => {
+                let season = it.parent_index_number.unwrap_or(0);
+                Path::new(&self.series_folder(it, naming, info))
+                    .join(format!("S{season:02}"))
+                    .join(self.file_name(it, naming))
+            }
+            "Movie" => match naming {
+                Naming::Clean => dotted_path(it, "Unknown"),
+                Naming::Server => PathBuf::from(self.file_name(it, naming)),
+            },
+            _ => PathBuf::from(self.file_name(it, Naming::Clean)),
+        }
+    }
+
+    /// The roots where `it` can be, the one used for a new download first.
+    fn roots(&self, it: &BaseItem, info: Option<&SeriesInfo>) -> Vec<PathBuf> {
+        let mut roots = match it.item_type.as_str() {
+            "Movie" => vec![self.movies_dir.clone(), self.default_dir.clone()],
+            "Episode" => {
+                let folder = self.series_folder(it, self.naming, info);
+                let (ongoing, ended) = (&self.series_ongoing_dir, &self.series_ended_dir);
+                // A series that has a folder stays there, whatever its status says.
+                let first = if ongoing.join(&folder).is_dir() {
+                    ongoing
+                } else if ended.join(&folder).is_dir() || info.and_then(|i| i.ended) == Some(true) {
+                    ended
+                } else {
+                    ongoing
+                };
+                let others = [ongoing, ended, &self.default_dir];
+                std::iter::once(first.clone())
+                    .chain(others.into_iter().filter(|r| *r != first).cloned())
+                    .collect()
+            }
+            _ => vec![self.default_dir.clone()],
+        };
+        roots.dedup();
+        roots
+    }
+
+    /// Where `it` is saved.
+    pub fn target(&self, it: &BaseItem, info: Option<&SeriesInfo>) -> PathBuf {
+        let root = self.roots(it, info).swap_remove(0);
+        root.join(self.relative(it, self.naming, info))
+    }
+
+    /// Every place where a complete copy of `it` can be: the target first, then
+    /// the other folders, the other naming, and the layouts of older versions.
+    pub fn candidates(&self, it: &BaseItem, info: Option<&SeriesInfo>) -> Vec<PathBuf> {
+        let other = match self.naming {
+            Naming::Clean => Naming::Server,
+            Naming::Server => Naming::Clean,
+        };
+        let mut out = vec![self.target(it, info)];
+        for root in self.roots(it, info) {
+            for naming in [self.naming, other] {
+                out.push(root.join(self.relative(it, naming, info)));
+            }
+            out.extend(older_targets_for(it, &root));
+        }
+        let mut seen = std::collections::HashSet::new();
+        out.retain(|p| seen.insert(p.clone()));
+        out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -351,5 +526,143 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(extension(&it), "mkv");
+    }
+
+    fn server_layout(root: &Path) -> DownloadLayout {
+        DownloadLayout {
+            default_dir: root.join("other"),
+            movies_dir: root.join("films"),
+            series_ongoing_dir: root.join("en-cours"),
+            series_ended_dir: root.join("finies"),
+            naming: Naming::Server,
+        }
+    }
+
+    fn file(path: &str) -> Vec<MediaSource> {
+        vec![MediaSource {
+            path: Some(path.into()),
+            ..Default::default()
+        }]
+    }
+
+    #[test]
+    fn server_names_for_movies() {
+        let m = BaseItem {
+            name: "Wicked : Partie II".into(),
+            item_type: "Movie".into(),
+            production_year: Some(2025),
+            media_sources: Some(file("/data/films/Wicked Partie II 2025.mkv")),
+            ..Default::default()
+        };
+        let l = server_layout(Path::new("/dl"));
+        assert_eq!(
+            l.target(&m, None),
+            PathBuf::from("/dl/films/Wicked Partie II 2025.mkv")
+        );
+        // Windows paths on the server work too.
+        let w = BaseItem {
+            media_sources: Some(file(r"D:\films\Wicked Partie II 2025.mkv")),
+            ..m.clone()
+        };
+        assert_eq!(l.target(&w, None), l.target(&m, None));
+        // No path: name and year.
+        let n = BaseItem {
+            media_sources: None,
+            container: Some("mkv".into()),
+            ..m
+        };
+        assert_eq!(
+            l.target(&n, None),
+            PathBuf::from("/dl/films/Wicked Partie II (2025).mkv")
+        );
+    }
+
+    fn episode() -> BaseItem {
+        BaseItem {
+            name: "Pilot".into(),
+            item_type: "Episode".into(),
+            series_name: Some("Ted Lasso".into()),
+            series_id: Some("s".into()),
+            parent_index_number: Some(1),
+            index_number: Some(1),
+            media_sources: Some(file(
+                "/tv/Ted Lasso/Ted.Lasso.S01E01.MULTi.VFi.WiTH.AD.1080p.WEBRip.AC3.5.1.H265-TARDiS.mkv",
+            )),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn series_go_to_the_folder_of_their_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = server_layout(dir.path());
+        let rel = "Ted Lasso (2020)/S01/Ted.Lasso.S01E01.MULTi.VFi.WiTH.AD.1080p.WEBRip.AC3.5.1.H265-TARDiS.mkv";
+        let info = |ended| SeriesInfo {
+            year: Some(2020),
+            ended,
+        };
+        let ep = episode();
+        assert_eq!(
+            l.target(&ep, Some(&info(Some(false)))),
+            l.series_ongoing_dir.join(rel)
+        );
+        assert_eq!(
+            l.target(&ep, Some(&info(None))),
+            l.series_ongoing_dir.join(rel)
+        );
+        assert_eq!(
+            l.target(&ep, None),
+            l.series_ongoing_dir.join(rel.replace(" (2020)", ""))
+        );
+        assert_eq!(
+            l.target(&ep, Some(&info(Some(true)))),
+            l.series_ended_dir.join(rel)
+        );
+        // A series that already has a folder stays there, whatever its status.
+        std::fs::create_dir_all(l.series_ongoing_dir.join("Ted Lasso (2020)")).unwrap();
+        assert_eq!(
+            l.target(&ep, Some(&info(Some(true)))),
+            l.series_ongoing_dir.join(rel)
+        );
+    }
+
+    #[test]
+    fn finds_a_file_in_another_series_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let l = server_layout(dir.path());
+        let info = SeriesInfo {
+            year: Some(2020),
+            ended: Some(false),
+        };
+        let ep = episode();
+        let there = l
+            .series_ended_dir
+            .join("Ted Lasso (2020)/S01/Ted.Lasso.S01E01.MULTi.VFi.WiTH.AD.1080p.WEBRip.AC3.5.1.H265-TARDiS.mkv");
+        assert!(l.candidates(&ep, Some(&info)).contains(&there));
+    }
+
+    #[test]
+    fn year_not_doubled_in_series_folder() {
+        let l = server_layout(Path::new("/dl"));
+        let mut ep = episode();
+        ep.series_name = Some("Ted Lasso (2020)".into());
+        let info = SeriesInfo {
+            year: Some(2020),
+            ended: None,
+        };
+        assert!(
+            l.target(&ep, Some(&info))
+                .starts_with("/dl/en-cours/Ted Lasso (2020)/S01")
+        );
+    }
+
+    #[test]
+    fn clean_naming_uses_the_type_folders() {
+        let mut l = server_layout(Path::new("/dl"));
+        l.naming = Naming::Clean;
+        assert_eq!(
+            l.target(&movie(), None),
+            PathBuf::from("/dl/films/Night.Harbor.Return.2024/Night.Harbor.Return.2024.mp4")
+        );
     }
 }

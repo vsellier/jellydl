@@ -17,6 +17,7 @@ use super::view::ListView;
 use crate::api::{BaseItem, NewSet, SortField, date};
 use crate::download::{JobState, Totals};
 use crate::paths;
+use crate::paths::{DownloadLayout, SeriesInfo};
 
 const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const ACCENT: Color = Color::Cyan;
@@ -72,13 +73,14 @@ fn draw_tabs(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn draw_library(f: &mut Frame, app: &mut App, area: Rect) {
-    let (dir, spin) = (app.download_dir.clone(), spinner(app));
+    let (layout, series, spin) = (app.layout.clone(), app.series_info.clone(), spinner(app));
     let ctx = DetailCtx {
         cast: &app.cast,
         posters: &mut app.posters,
         // An image under a popup could stay on screen.
         show_poster: app.popup.is_none(),
-        dir: &dir,
+        layout: &layout,
+        series: &series,
         new: &app.new_set,
     };
     if let Some(v) = app.lib_stack.last_mut() {
@@ -115,12 +117,13 @@ fn draw_search(f: &mut Frame, app: &mut App, area: Rect) {
     if app.search_editing {
         f.set_cursor_position((input.x + 1 + cursor as u16, input.y + 1));
     }
-    let (dir, spin) = (app.download_dir.clone(), spinner(app));
+    let (layout, series, spin) = (app.layout.clone(), app.series_info.clone(), spinner(app));
     let ctx = DetailCtx {
         cast: &app.cast,
         posters: &mut app.posters,
         show_poster: app.popup.is_none(),
-        dir: &dir,
+        layout: &layout,
+        series: &series,
         new: &app.new_set,
     };
     draw_list_and_detail(f, &mut app.search, ctx, rest, spin);
@@ -219,7 +222,8 @@ struct DetailCtx<'a> {
     cast: &'a HashMap<String, Cast>,
     posters: &'a mut PosterCache,
     show_poster: bool,
-    dir: &'a std::path::Path,
+    layout: &'a DownloadLayout,
+    series: &'a HashMap<String, SeriesInfo>,
     new: &'a NewSet,
 }
 
@@ -235,7 +239,7 @@ fn draw_detail(f: &mut Frame, it: Option<&BaseItem>, ctx: DetailCtx, area: Rect)
     let inner = block.inner(area);
     f.render_widget(block, area);
     let Some(it) = it else { return };
-    let (mut head, body) = detail_text(it, ctx.cast.get(&it.id), ctx.dir);
+    let (mut head, body) = detail_text(it, ctx.cast.get(&it.id), ctx.layout, ctx.series);
     let para = |lines: Vec<Line<'static>>| Paragraph::new(lines).wrap(Wrap { trim: false });
 
     let poster = match ctx.posters.get_mut(&it.id) {
@@ -296,7 +300,8 @@ fn draw_detail(f: &mut Frame, it: Option<&BaseItem>, ctx: DetailCtx, area: Rect)
 fn detail_text(
     it: &BaseItem,
     cast: Option<&Cast>,
-    dir: &std::path::Path,
+    layout: &DownloadLayout,
+    series: &HashMap<String, SeriesInfo>,
 ) -> (Vec<Line<'static>>, Vec<Line<'static>>) {
     let mut lines = vec![Line::from(it.name.clone()).bold().fg(ACCENT)];
     let kv = |k: &str, v: String| {
@@ -340,7 +345,8 @@ fn detail_text(
                 .unwrap_or_else(|| "unknown".into()),
         ));
         lines.push(kv("Format", paths::extension(it)));
-        let status = if downloaded_path(it, dir).is_some() {
+        let info = it.series_id.as_ref().and_then(|id| series.get(id));
+        let status = if downloaded_path(it, layout, info).is_some() {
             Span::styled("downloaded ✓", Style::new().fg(Color::Green))
         } else {
             Span::raw("not downloaded")
@@ -353,12 +359,10 @@ fn detail_text(
     let head = lines;
     let mut lines = Vec::new();
     if it.is_playable() {
-        match downloaded_path(it, dir) {
+        let info = it.series_id.as_ref().and_then(|id| series.get(id));
+        match downloaded_path(it, layout, info) {
             Some(p) => lines.push(kv("File", p.display().to_string())),
-            None => lines.push(kv(
-                "Save to",
-                paths::target_for(it, dir).display().to_string(),
-            )),
+            None => lines.push(kv("Save to", layout.target(it, info).display().to_string())),
         }
     } else {
         lines.push(Line::from("d downloads every item inside").dark_gray());
@@ -807,7 +811,8 @@ mod tests {
                 cast: &cast,
                 posters: &mut posters,
                 show_poster: false,
-                dir: std::path::Path::new("/tmp/x"),
+                layout: &DownloadLayout::single(std::path::PathBuf::from("/tmp/x")),
+                series: &HashMap::new(),
                 new: &set,
             };
             draw_list_and_detail(f, &mut v, ctx, f.area(), "");
@@ -846,7 +851,8 @@ mod tests {
                 cast: &cast,
                 posters,
                 show_poster,
-                dir: std::path::Path::new("/tmp/x"),
+                layout: &DownloadLayout::single(std::path::PathBuf::from("/tmp/x")),
+                series: &HashMap::new(),
                 new: &NewSet::empty(0),
             };
             draw_detail(f, Some(&it), ctx, f.area());

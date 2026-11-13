@@ -224,6 +224,20 @@ impl Jellyfin {
         })
     }
 
+    /// Year and status of series, by id.
+    pub async fn series_info(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashMap<String, crate::paths::SeriesInfo>> {
+        Ok(self
+            .items_by_ids(ids)
+            .await?
+            .into_iter()
+            .filter(|s| s.item_type == "Series")
+            .map(|s| (s.id.clone(), crate::paths::SeriesInfo::from_item(&s)))
+            .collect())
+    }
+
     /// Folders above an item, nearest first.
     pub async fn ancestors(&self, item_id: &str) -> Result<Vec<BaseItem>> {
         self.get(

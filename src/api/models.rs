@@ -29,6 +29,8 @@ pub struct BaseItem {
     pub parent_id: Option<String>,
     pub media_sources: Option<Vec<MediaSource>>,
     pub people: Option<Vec<Person>>,
+    /// For a series: "Continuing" or "Ended".
+    pub status: Option<String>,
 }
 
 /// An actor, director, writer... of an item.
