@@ -308,6 +308,9 @@ The queue, log, device id, and UI state (sort and last check) are in `~/.local/s
 | `?` | help |
 | `q` | quit (asks first if downloads are active; the queue is saved) |
 
+The first screen starts with three entries, `New movies`, `New 4K movies` and `New series`.
+Each one lists the 100 latest additions of the server, newest first (4K = a video stream of about 3840 pixels wide or more).
+
 A movie or episode is new when it was added to the server after the last check.
 A series, season or folder is new when it holds a new file.
 New items have a `new` tag in the lists.

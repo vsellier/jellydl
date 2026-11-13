@@ -308,7 +308,7 @@ impl App {
 
     /// The filter date the current list should have.
     fn wanted_filter(&self, v: &ListView) -> Option<i64> {
-        let filterable = !matches!(v.source, Source::Libraries);
+        let filterable = !matches!(v.source, Source::Libraries | Source::Latest(_));
         (self.new_only && filterable).then_some(self.last_check)
     }
 
@@ -463,10 +463,14 @@ impl App {
                 super::new_items::load(&api, source, sort, since).await
             } else {
                 match source {
-                    Source::Libraries => api.views().await.map(|items| QueryResult {
-                        total_record_count: items.len(),
-                        items,
+                    Source::Libraries => api.views().await.map(|items| {
+                        let items = crate::api::with_latest_entries(items);
+                        QueryResult {
+                            total_record_count: items.len(),
+                            items,
+                        }
                     }),
+                    Source::Latest(kind) => api.latest(kind).await,
                     Source::Children {
                         parent_id,
                         collection_type,
@@ -745,7 +749,8 @@ impl App {
         let Some(v) = self.current_view_mut() else {
             return;
         };
-        let targets = v.targets();
+        let mut targets = v.targets();
+        targets.retain(|i| !i.is_latest_entry());
         v.clear_marks();
         if targets.is_empty() {
             return;
@@ -1019,6 +1024,12 @@ impl App {
             return;
         };
         let (title, source) = match item.item_type.as_str() {
+            _ if item.is_latest_entry() => {
+                let Some(kind) = crate::api::LatestKind::from_entry(&item) else {
+                    return;
+                };
+                (kind.title().to_string(), Source::Latest(kind))
+            }
             "Series" => (
                 item.name.clone(),
                 Source::Seasons {
@@ -1204,6 +1215,7 @@ mod tests {
                 size: Some(3),
                 container: Some("mkv".into()),
                 path: None,
+                ..Default::default()
             }]),
             ..Default::default()
         };

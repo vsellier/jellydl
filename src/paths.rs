@@ -223,6 +223,7 @@ mod tests {
                 size: Some(10),
                 container: Some("mkv".into()),
                 path: Some("/media/videos/Night Harbor Return.MP4".into()),
+                ..Default::default()
             }]),
             ..Default::default()
         }

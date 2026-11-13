@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use ratatui::widgets::ListState;
 
-use crate::api::{BaseItem, Sort};
+use crate::api::{BaseItem, LatestKind, Sort};
 
 pub const PAGE_SIZE: usize = 100;
 
@@ -25,6 +25,8 @@ pub enum Source {
     Search {
         term: String,
     },
+    /// The latest additions: movies, 4K movies or series.
+    Latest(LatestKind),
 }
 
 impl Source {
