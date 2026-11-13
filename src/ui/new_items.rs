@@ -13,7 +13,7 @@ use crate::api::{BaseItem, Jellyfin, QueryResult, Sort, SortField};
 pub async fn load(api: &Jellyfin, source: Source, sort: Sort, since: i64) -> Result<QueryResult> {
     let items = match source {
         // The first screen is never filtered.
-        Source::Libraries => api.views().await?,
+        Source::Libraries => crate::api::with_latest_entries(api.views().await?),
         Source::Children {
             parent_id,
             collection_type,
@@ -62,6 +62,11 @@ pub async fn load(api: &Jellyfin, source: Source, sort: Sort, since: i64) -> Res
             let mut r = api.episodes(&series_id, &season_id).await?;
             r.items.retain(|it| it.added_after(since));
             r.items
+        }
+        Source::Latest(kind) => {
+            let mut items = api.latest(kind).await?.items;
+            items.retain(|it| it.added_after(since));
+            items
         }
         Source::Search { term } => {
             let (_, set) = api.new_set(None, since, false).await?;
