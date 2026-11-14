@@ -21,6 +21,7 @@ A terminal app to browse and search a Jellyfin library and download videos.
 - The queue is saved. Downloads that were running when you quit resume at the next start.
 - Proxy support: HTTP, HTTPS, SOCKS5 and SOCKS5h, with or without a username and password.
 - Login with a username and password, or with an API key.
+- A web interface (`--serve`) for a NAS or a server: browse, search, download and follow the queue from a browser.
 
 ## Legal and responsible use
 
@@ -257,6 +258,29 @@ To type less, add an alias to your shell config:
 alias jellydl='docker run --rm -it --user "$(id -u):$(id -g)" -e TERM -e TERM_PROGRAM -v ~/jellydl/config:/config:ro -v ~/jellydl/data:/data -v ~/Videos/jellyfin:/downloads ghcr.io/vsellier/jellydl:latest'
 ```
 
+### Web interface on a NAS
+
+Run jellydl as a service, with the web interface:
+
+```sh
+docker run -d --name jellydl --restart unless-stopped --user "$(id -u):$(id -g)" \
+  -e JELLYDL_LISTEN=0.0.0.0:8080 -p 127.0.0.1:8080:8080 \
+  -v ~/jellydl/config:/config:ro \
+  -v ~/jellydl/data:/data \
+  -v /volume1/video:/downloads \
+  jellydl --serve
+```
+
+- `JELLYDL_LISTEN=0.0.0.0:8080` makes jellydl listen on all addresses in the container.
+  `-p 127.0.0.1:8080:8080` publishes the port only on the NAS itself: a reverse proxy on the NAS
+  can reach it, other machines cannot.
+- `docker stop jellydl` saves the queue. Downloads continue at the next start.
+- With folders by type, use paths in the container: for example
+  `movies_dir = "/downloads/Films"` and `series_ended_dir = "/downloads/Séries terminées"`.
+  To use other disks, mount them too (`-v /volume2/series:/series`) and use these paths.
+
+See [Web interface](#web-interface) about the login.
+
 ### Check the image
 
 Each published image has a signed build provenance attestation, like the archives:
@@ -264,6 +288,30 @@ Each published image has a signed build provenance attestation, like the archive
 ```sh
 gh attestation verify oci://ghcr.io/vsellier/jellydl:<version> --repo vsellier/jellydl
 ```
+
+## Web interface
+
+```sh
+jellydl --serve                         # http://127.0.0.1:8080/
+jellydl --serve --listen 0.0.0.0:8080   # or JELLYDL_LISTEN=0.0.0.0:8080
+```
+
+The web interface does the same things as the terminal interface:
+
+- The first screen shows `New movies`, `New 4K movies`, `New series`, then the libraries.
+- Open a library, a series or a season. Sort the library lists. Search.
+- Click a video to see its details, its cast, and where it is (or will be) on disk.
+- Select videos (the box at the top left of a poster) and download them, or download a whole
+  folder, series or season with `Download all`.
+- The `Downloads` tab shows the queue live: pause, resume, cancel, retry, number of parallel downloads.
+
+The terminal and the web interface use the same config, folders and queue. Run only one of them at a time.
+
+**There is no login.** Anyone who can open the page can start downloads with your Jellyfin account.
+By default jellydl listens only on `127.0.0.1`. To use it from other machines, put a reverse proxy
+with authentication in front of it (for example Caddy or nginx with basic auth, or an SSO proxy).
+The page uses server-sent events (`/api/events`): turn off response buffering for this path in the proxy
+(nginx: `proxy_buffering off;`).
 
 ## Files on disk
 
@@ -279,6 +327,34 @@ For example: `Elodie.2001/Elodie.2001.mkv`, `Garden.Diaries/S01/Garden.Diaries.S
 - Accented letters become plain letters (`é` becomes `e`). Letters with no plain version, such as `東京`, are kept.
 
 Jellyfin and Plex read the title, year and number (`S01E03`) from these names, so you can add the folder to a media server.
+
+### Folders by type, and names from the server
+
+By default everything goes to `download_dir` with the clean names above. You can split the downloads:
+
+```toml
+download_dir       = "~/Videos/jellyfin"          # everything that is not set below
+movies_dir         = "~/Videos/Movies"
+series_ongoing_dir = "~/Videos/Series"            # series that still get new episodes
+series_ended_dir   = "~/Videos/Series (ended)"    # finished series
+naming             = "server"                     # default: "clean"
+```
+
+With `naming = "server"`, jellydl keeps the file name that the server has:
+
+```text
+<movies_dir>/Wicked Partie II 2025.mkv
+<series_dir>/Ted Lasso (2020)/S01/Ted.Lasso.S01E01.MULTi.VFi.WiTH.AD.1080p.WEBRip.AC3.5.1.H265-TARDiS.mkv
+```
+
+Only the characters that a file system does not accept are changed. The series folder is
+`Name (Year)`, with the year that Jellyfin has for the series. If the server has no file name,
+jellydl builds one from the title and the year.
+
+A series goes to `series_ended_dir` when Jellyfin says its status is `Ended`, and to `series_ongoing_dir`
+when it is `Continuing` or unknown. A series that already has a folder in one of the two
+folders stays there, even if its status changed. Move the folder yourself when a series ends.
+jellydl looks in all the folders to know if a file is already downloaded.
 
 Older versions of jellydl put the files in a folder by type, first with spaces in the names
 (`Elodie (2001)`), then with dots (`Elodie.2001`).
@@ -296,7 +372,7 @@ The queue, log, device id, and UI state (sort and last check) are in `~/.local/s
 | `↑` `↓` / `j` `k`, `PgUp` `PgDn`, `g` `G` | move |
 | `Enter` / `→` | open the selected item |
 | `Esc` / `←` / `Backspace` | go back |
-| `/` | search. In the search box: `←` `→`, `Home` `End`, `Ctrl+A` `Ctrl+E` move the cursor, `Del` deletes the next character |
+| `/` | search. In the search box: readline keys (see below) |
 | `d` | download the selected video, or the marked videos. On a folder or library: all the videos inside |
 | `Space` / `a` | mark one item / mark all |
 | `r` | reload the list |
@@ -307,6 +383,24 @@ The queue, log, device id, and UI state (sort and last check) are in `~/.local/s
 | `N` | mark all as seen: set the last check to now (asks first) |
 | `?` | help |
 | `q` | quit (asks first if downloads are active; the queue is saved) |
+
+The first screen starts with three entries, `New movies`, `New 4K movies` and `New series`.
+Each one lists the 100 latest additions of the server, newest first (4K = a video stream of about 3840 pixels wide or more).
+
+Text boxes (the search box) support the readline keys:
+
+| Key | Action |
+|---|---|
+| `Ctrl+A` `Ctrl+E` / `Home` `End` | start / end of the line |
+| `Ctrl+B` `Ctrl+F` / `←` `→` | one character left / right |
+| `Alt+B` `Alt+F` / `Ctrl+←` `Ctrl+→` | one word left / right |
+| `Ctrl+H` / `Backspace`, `Ctrl+D` / `Del` | delete the character before / after the cursor |
+| `Ctrl+W` / `Alt+Backspace`, `Alt+D` | delete the word before / after the cursor |
+| `Ctrl+U`, `Ctrl+K` | delete to the start / to the end of the line |
+| `Ctrl+Y` | paste the text deleted by the last `Ctrl+W`, `Ctrl+U`, `Ctrl+K` or `Alt+D` |
+| `Ctrl+T` | swap the two characters around the cursor |
+| `Alt+U` `Alt+L` `Alt+C` | upper case, lower case, capitalize the next word |
+| `Ctrl+N`, `Enter`, `Esc` | leave the box |
 
 A movie or episode is new when it was added to the server after the last check.
 A series, season or folder is new when it holds a new file.

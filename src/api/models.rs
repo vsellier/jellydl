@@ -29,6 +29,8 @@ pub struct BaseItem {
     pub parent_id: Option<String>,
     pub media_sources: Option<Vec<MediaSource>>,
     pub people: Option<Vec<Person>>,
+    /// For a series: "Continuing" or "Ended".
+    pub status: Option<String>,
 }
 
 /// An actor, director, writer... of an item.
@@ -48,6 +50,17 @@ pub struct MediaSource {
     pub size: Option<u64>,
     pub container: Option<String>,
     pub path: Option<String>,
+    pub media_streams: Option<Vec<MediaStream>>,
+}
+
+/// A video, audio or subtitle stream of a file.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "PascalCase", default)]
+pub struct MediaStream {
+    #[serde(rename = "Type")]
+    pub kind: String,
+    pub width: Option<i32>,
+    pub height: Option<i32>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -80,6 +93,9 @@ pub struct Policy {
     pub enable_content_downloading: Option<bool>,
 }
 
+/// `Type` of the virtual entries that open a list of the latest additions.
+pub const LATEST_TYPE: &str = "Latest";
+
 impl BaseItem {
     /// True for items that can have a cast (actors, directors).
     pub fn has_people(&self) -> bool {
@@ -91,7 +107,26 @@ impl BaseItem {
 
     /// True for a top-level library (Movies, Shows...).
     pub fn is_library(&self) -> bool {
-        matches!(self.item_type.as_str(), "CollectionFolder" | "UserView")
+        matches!(
+            self.item_type.as_str(),
+            "CollectionFolder" | "UserView" | LATEST_TYPE
+        )
+    }
+
+    /// True for the virtual "new on the server" entries of the first screen.
+    pub fn is_latest_entry(&self) -> bool {
+        self.item_type == LATEST_TYPE
+    }
+
+    /// True when the first video stream is Ultra HD (about 3840x2160 or more).
+    pub fn is_4k(&self) -> bool {
+        self.media_sources
+            .iter()
+            .flatten()
+            .flat_map(|m| m.media_streams.iter().flatten())
+            .any(|s| {
+                s.kind == "Video" && (s.width.unwrap_or(0) >= 3400 || s.height.unwrap_or(0) >= 2100)
+            })
     }
 
     /// True for items that have a file to download.
@@ -166,6 +201,7 @@ impl BaseItem {
             "Episode" => "EP ",
             "BoxSet" => "SET",
             "CollectionFolder" | "UserView" => "LIB",
+            LATEST_TYPE => "NEW",
             "Video" | "MusicVideo" => "VID",
             _ => "DIR",
         }
@@ -190,5 +226,29 @@ mod tests {
         assert!(item("UserView").is_library());
         assert!(!item("Folder").is_library());
         assert!(!item("Movie").is_library());
+    }
+}
+
+#[cfg(test)]
+mod tests_4k {
+    use super::*;
+
+    fn movie(w: i32, h: i32) -> BaseItem {
+        serde_json::from_value(serde_json::json!({
+            "Id": "m", "Type": "Movie",
+            "MediaSources": [{ "MediaStreams": [
+                { "Type": "Audio" },
+                { "Type": "Video", "Width": w, "Height": h }
+            ]}]
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn detects_4k() {
+        assert!(movie(3840, 2160).is_4k());
+        assert!(movie(3840, 1600).is_4k());
+        assert!(!movie(1920, 1080).is_4k());
+        assert!(!BaseItem::default().is_4k());
     }
 }

@@ -229,3 +229,42 @@ async fn seasons_and_episodes_are_filtered() {
         .unwrap();
     assert_eq!(names(&r.items), ["Ep 5"]);
 }
+
+#[tokio::test]
+async fn latest_movies_4k_and_series() {
+    use jellydl::api::LatestKind;
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let api = login(&server, dir.path()).await;
+    let video =
+        |w: i32| json!([{ "MediaStreams": [{ "Type": "Video", "Width": w, "Height": w / 2 }] }]);
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .and(query_param("IncludeItemTypes", "Movie"))
+        .respond_with(reply(
+            json!([
+                { "Id": "a", "Name": "UHD", "Type": "Movie", "MediaSources": video(3840) },
+                { "Id": "b", "Name": "HD", "Type": "Movie", "MediaSources": video(1920) },
+            ]),
+            2,
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/Items"))
+        .and(query_param("IncludeItemTypes", "Series"))
+        .respond_with(reply(
+            json!([{ "Id": "s", "Name": "Show", "Type": "Series" }]),
+            1,
+        ))
+        .mount(&server)
+        .await;
+
+    let n = |r: jellydl::api::QueryResult| r.items.into_iter().map(|i| i.name).collect::<Vec<_>>();
+    assert_eq!(
+        n(api.latest(LatestKind::Movies).await.unwrap()),
+        ["UHD", "HD"]
+    );
+    assert_eq!(n(api.latest(LatestKind::Movies4k).await.unwrap()), ["UHD"]);
+    assert_eq!(n(api.latest(LatestKind::Series).await.unwrap()), ["Show"]);
+}

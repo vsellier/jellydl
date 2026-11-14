@@ -10,7 +10,65 @@ use anyhow::Result;
 use futures::{StreamExt, TryStreamExt, stream};
 
 use super::client::LIST_FIELDS;
-use super::{BaseItem, Jellyfin};
+use super::models::LATEST_TYPE;
+use super::{BaseItem, Jellyfin, QueryResult};
+
+/// What the "latest additions" lists show.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LatestKind {
+    Movies,
+    Movies4k,
+    Series,
+}
+
+impl LatestKind {
+    pub const ALL: [LatestKind; 3] = [Self::Movies, Self::Movies4k, Self::Series];
+
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Movies => "New movies",
+            Self::Movies4k => "New 4K movies",
+            Self::Series => "New series",
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::Movies => "jellydl:latest:movies",
+            Self::Movies4k => "jellydl:latest:movies4k",
+            Self::Series => "jellydl:latest:series",
+        }
+    }
+
+    /// The virtual entry shown on the first screen.
+    pub fn entry(self) -> BaseItem {
+        BaseItem {
+            id: self.id().into(),
+            name: self.title().into(),
+            item_type: LATEST_TYPE.into(),
+            is_folder: Some(true),
+            ..Default::default()
+        }
+    }
+
+    pub fn from_entry(it: &BaseItem) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| it.id == k.id())
+    }
+}
+
+/// Items in a latest additions list.
+pub const LATEST_LIMIT: usize = 100;
+/// Pages of movies read at most to find 4K ones.
+const MAX_4K_PAGES: usize = 10;
+
+/// The latest additions entries, to put before the libraries.
+pub fn with_latest_entries(libs: Vec<BaseItem>) -> Vec<BaseItem> {
+    LatestKind::ALL
+        .into_iter()
+        .map(LatestKind::entry)
+        .chain(libs)
+        .collect()
+}
 
 /// Item types that have a file. The others hold files.
 const MEDIA_TYPES: &str = "Movie,Episode,Video,MusicVideo";
@@ -116,6 +174,68 @@ impl Jellyfin {
             set.ids.extend(above.into_iter().flatten().map(|it| it.id));
         }
         Ok((media, set))
+    }
+
+    /// The most recently added movies, 4K movies or series, newest first.
+    pub async fn latest(&self, kind: LatestKind) -> Result<QueryResult> {
+        let types = match kind {
+            LatestKind::Series => "Series",
+            _ => "Movie",
+        };
+        let (mut out, mut start) = (Vec::new(), 0);
+        // 4K is not a server filter: read the newest movies and keep the 4K ones.
+        let pages = if kind == LatestKind::Movies4k {
+            MAX_4K_PAGES
+        } else {
+            1
+        };
+        for _ in 0..pages {
+            let (s, l) = (start.to_string(), PAGE.to_string());
+            let r = self
+                .get_items(
+                    "/Items",
+                    &[
+                        ("userId", self.user_id.as_str()),
+                        ("Recursive", "true"),
+                        ("IncludeItemTypes", types),
+                        ("SortBy", "DateCreated"),
+                        ("SortOrder", "Descending"),
+                        ("StartIndex", &s),
+                        ("Limit", &l),
+                        ("Fields", LIST_FIELDS),
+                        ("EnableImages", "false"),
+                    ],
+                )
+                .await?;
+            let n = r.items.len();
+            out.extend(r.items.into_iter().filter(|it| match kind {
+                LatestKind::Movies4k => it.is_4k(),
+                _ => true,
+            }));
+            start += n;
+            if n == 0 || start >= r.total_record_count || out.len() >= LATEST_LIMIT {
+                break;
+            }
+        }
+        out.truncate(LATEST_LIMIT);
+        Ok(QueryResult {
+            total_record_count: out.len(),
+            items: out,
+        })
+    }
+
+    /// Year and status of series, by id.
+    pub async fn series_info(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashMap<String, crate::paths::SeriesInfo>> {
+        Ok(self
+            .items_by_ids(ids)
+            .await?
+            .into_iter()
+            .filter(|s| s.item_type == "Series")
+            .map(|s| (s.id.clone(), crate::paths::SeriesInfo::from_item(&s)))
+            .collect())
     }
 
     /// Folders above an item, nearest first.

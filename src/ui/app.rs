@@ -18,7 +18,7 @@ use super::input::TextInput;
 use super::view::{ListView, LoadKind, PAGE_SIZE, PageAction, Source};
 use crate::api::{BaseItem, Jellyfin, NewSet, Person, QueryResult, Sort, SortField, date};
 use crate::download::{Command, Event as MgrEvent, Job, JobState, ManagerHandle, NewJob};
-use crate::paths;
+use crate::paths::{DownloadLayout, SeriesInfo};
 
 /// Rows moved by PgUp / PgDn.
 const PAGE_STEP: usize = 20;
@@ -113,13 +113,24 @@ pub enum Cast {
     Failed,
 }
 
+/// Items to download, with what is known of their series.
+pub struct Collected {
+    pub items: Vec<BaseItem>,
+    pub series: HashMap<String, SeriesInfo>,
+}
+
 pub enum AppEvent {
     Page {
         view: u64,
         req: u64,
         result: Result<QueryResult, String>,
     },
-    Collected(Result<Vec<BaseItem>, String>),
+    Collected(Result<Collected, String>),
+    /// Series found for their episodes (`None`: the request failed).
+    SeriesInfo {
+        asked: Vec<String>,
+        found: HashMap<String, SeriesInfo>,
+    },
     People {
         item_id: String,
         result: Result<Vec<Person>, String>,
@@ -168,7 +179,10 @@ pub struct App {
     pub api: Jellyfin,
     pub tx: mpsc::UnboundedSender<AppEvent>,
     pub mgr: ManagerHandle,
-    pub download_dir: PathBuf,
+    pub layout: DownloadLayout,
+    /// What is known of the series of the episodes seen, to place their files.
+    pub series_info: HashMap<String, SeriesInfo>,
+    series_pending: HashSet<String>,
     pub proxy_label: Option<String>,
 
     pub tab: Tab,
@@ -213,7 +227,7 @@ impl App {
         api: Jellyfin,
         tx: mpsc::UnboundedSender<AppEvent>,
         mgr: ManagerHandle,
-        download_dir: PathBuf,
+        layout: DownloadLayout,
         proxy_label: Option<String>,
         max_parallel: usize,
         speed_limit: Option<u64>,
@@ -222,7 +236,9 @@ impl App {
             api,
             tx,
             mgr,
-            download_dir,
+            layout,
+            series_info: HashMap::new(),
+            series_pending: HashSet::new(),
             proxy_label,
             tab: Tab::Library,
             lib_stack: Vec::new(),
@@ -308,7 +324,7 @@ impl App {
 
     /// The filter date the current list should have.
     fn wanted_filter(&self, v: &ListView) -> Option<i64> {
-        let filterable = !matches!(v.source, Source::Libraries);
+        let filterable = !matches!(v.source, Source::Libraries | Source::Latest(_));
         (self.new_only && filterable).then_some(self.last_check)
     }
 
@@ -463,10 +479,14 @@ impl App {
                 super::new_items::load(&api, source, sort, since).await
             } else {
                 match source {
-                    Source::Libraries => api.views().await.map(|items| QueryResult {
-                        total_record_count: items.len(),
-                        items,
+                    Source::Libraries => api.views().await.map(|items| {
+                        let items = crate::api::with_latest_entries(items);
+                        QueryResult {
+                            total_record_count: items.len(),
+                            items,
+                        }
                     }),
+                    Source::Latest(kind) => api.latest(kind).await,
                     Source::Children {
                         parent_id,
                         collection_type,
@@ -624,7 +644,16 @@ impl App {
                     }
                 }
             }
-            AppEvent::Collected(Ok(items)) => self.prepare_enqueue(items),
+            AppEvent::Collected(Ok(c)) => {
+                self.series_info.extend(c.series);
+                self.prepare_enqueue(c.items);
+            }
+            AppEvent::SeriesInfo { asked, found } => {
+                for id in asked {
+                    self.series_pending.remove(&id);
+                }
+                self.series_info.extend(found);
+            }
             AppEvent::Collected(Err(e)) => self.error(format!("cannot list the videos: {e}")),
             AppEvent::Poster { item_id, poster } => self.posters.insert(item_id, poster),
             AppEvent::People { item_id, result } => {
@@ -710,6 +739,7 @@ impl App {
             }
         }
         let it = it.clone();
+        self.load_series_info(&it);
         if it.has_people() && !self.cast.contains_key(&id) {
             self.cast.insert(id.clone(), Cast::Loading);
             let (api, tx, id) = (self.api.clone(), self.tx.clone(), id.clone());
@@ -745,22 +775,26 @@ impl App {
         let Some(v) = self.current_view_mut() else {
             return;
         };
-        let targets = v.targets();
+        let mut targets = v.targets();
+        targets.retain(|i| !i.is_latest_entry());
         v.clear_marks();
         if targets.is_empty() {
             return;
         }
         let (direct, folders): (Vec<_>, Vec<_>) =
             targets.into_iter().partition(|i| i.is_playable());
-        if folders.is_empty() {
+        if folders.is_empty() && self.missing_series(&direct).is_empty() {
             self.prepare_enqueue(direct);
             return;
         }
-        self.info(format!(
-            "Listing the content of {} item(s)...",
-            folders.len()
-        ));
+        if !folders.is_empty() {
+            self.info(format!(
+                "Listing the content of {} item(s)...",
+                folders.len()
+            ));
+        }
         let (api, tx) = (self.api.clone(), self.tx.clone());
+        let known: HashMap<String, SeriesInfo> = self.series_info.clone();
         tokio::spawn(async move {
             let mut all = direct;
             for f in folders {
@@ -772,8 +806,70 @@ impl App {
                     }
                 }
             }
-            let _ = tx.send(AppEvent::Collected(Ok(all)));
+            // The series tell where the episodes go: its year and if it is finished.
+            let mut ids: Vec<String> = all
+                .iter()
+                .filter(|i| i.item_type == "Episode")
+                .filter_map(|i| i.series_id.clone())
+                .filter(|id| !known.contains_key(id))
+                .collect();
+            ids.sort();
+            ids.dedup();
+            let series = match api.series_info(&ids).await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::warn!("cannot read the series of the episodes: {e:#}");
+                    HashMap::new()
+                }
+            };
+            let _ = tx.send(AppEvent::Collected(Ok(Collected { items: all, series })));
         });
+    }
+
+    /// Series of these episodes that are not known yet.
+    fn missing_series(&self, items: &[BaseItem]) -> Vec<String> {
+        let mut ids: Vec<String> = items
+            .iter()
+            .filter(|i| i.item_type == "Episode")
+            .filter_map(|i| i.series_id.clone())
+            .filter(|id| !self.series_info.contains_key(id))
+            .collect();
+        ids.sort();
+        ids.dedup();
+        ids
+    }
+
+    /// Ask for the series of the selected episode, to show where it is saved.
+    fn load_series_info(&mut self, it: &BaseItem) {
+        let Some(id) = it.series_id.clone().filter(|_| it.item_type == "Episode") else {
+            return;
+        };
+        if self.series_info.contains_key(&id) || !self.series_pending.insert(id.clone()) {
+            return;
+        }
+        let (api, tx) = (self.api.clone(), self.tx.clone());
+        tokio::spawn(async move {
+            let found = api.series_info(std::slice::from_ref(&id)).await;
+            let _ = tx.send(AppEvent::SeriesInfo {
+                asked: vec![id],
+                found: found.unwrap_or_default(),
+            });
+        });
+    }
+
+    pub fn series_info_of(&self, it: &BaseItem) -> Option<&SeriesInfo> {
+        it.series_id
+            .as_ref()
+            .and_then(|id| self.series_info.get(id))
+    }
+
+    /// Where `it` goes.
+    pub fn target_of(&self, it: &BaseItem) -> PathBuf {
+        let info = it
+            .series_id
+            .as_ref()
+            .and_then(|id| self.series_info.get(id));
+        self.layout.target(it, info)
     }
 
     fn prepare_enqueue(&mut self, items: Vec<BaseItem>) {
@@ -788,31 +884,16 @@ impl App {
             })
             .map(|j| j.item_id.as_str())
             .collect();
-        let mut seen = HashSet::new();
-        let (mut jobs, mut skipped, mut size, mut unknown_size) = (Vec::new(), 0, 0u64, 0);
-        for it in items.into_iter().filter(|i| i.is_playable()) {
-            if busy.contains(it.id.as_str()) || !seen.insert(it.id.clone()) {
-                skipped += 1;
-                continue;
-            }
-            let target = paths::target_for(&it, &self.download_dir);
-            let expected = it.size();
-            if downloaded_path(&it, &self.download_dir).is_some() {
-                skipped += 1;
-                continue;
-            }
-            match expected {
-                Some(s) => size += s,
-                None => unknown_size += 1,
-            }
-            jobs.push(NewJob {
-                url: self.api.download_url(&it.id),
-                title: it.label(),
-                item_id: it.id,
-                target,
-                expected_size: expected,
+        let plan =
+            crate::download::plan::plan(items, &busy, &self.layout, &self.series_info, |id| {
+                self.api.download_url(id)
             });
-        }
+        let crate::download::plan::Plan {
+            jobs,
+            skipped,
+            size,
+            unknown_size,
+        } = plan;
         match jobs.len() {
             0 if skipped > 0 => self.info("Nothing to do: already downloaded or in the queue"),
             0 => self.info("Nothing to download here"),
@@ -937,6 +1018,10 @@ impl App {
                 self.run_search();
             }
             KeyCode::Esc | KeyCode::Down => self.search_editing = false,
+            // Ctrl+N: next line, as Down.
+            KeyCode::Char('n') if k.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.search_editing = false
+            }
             // Other Ctrl keys do nothing while typing: Ctrl+Q must not ask to quit.
             KeyCode::Char(_) => {}
             _ => return false,
@@ -1019,6 +1104,12 @@ impl App {
             return;
         };
         let (title, source) = match item.item_type.as_str() {
+            _ if item.is_latest_entry() => {
+                let Some(kind) = crate::api::LatestKind::from_entry(&item) else {
+                    return;
+                };
+                (kind.title().to_string(), Source::Latest(kind))
+            }
             "Series" => (
                 item.name.clone(),
                 Source::Seasons {
@@ -1130,18 +1221,7 @@ impl App {
     }
 }
 
-pub fn on_disk(target: &std::path::Path, expected: Option<u64>) -> bool {
-    std::fs::metadata(target).is_ok_and(|m| expected.is_none_or(|e| e == m.len()))
-}
-
-/// The complete file of `it` on disk, where jellydl saves it now or where
-/// older versions saved it.
-pub fn downloaded_path(it: &BaseItem, root: &std::path::Path) -> Option<PathBuf> {
-    let expected = it.size();
-    std::iter::once(paths::target_for(it, root))
-        .chain(paths::older_targets_for(it, root))
-        .find(|p| on_disk(p, expected))
-}
+pub use crate::paths::{downloaded_path, on_disk};
 
 /// Run the TUI until the user quits.
 pub async fn run(
@@ -1191,10 +1271,12 @@ pub async fn run(
 mod tests {
     use super::*;
     use crate::api::models::MediaSource;
+    use crate::paths;
 
     #[test]
     fn finds_files_under_old_names() {
         let dir = tempfile::tempdir().unwrap();
+        let layout = DownloadLayout::single(dir.path().to_path_buf());
         let it = BaseItem {
             id: "1".into(),
             name: "Élodie".into(),
@@ -1204,30 +1286,31 @@ mod tests {
                 size: Some(3),
                 container: Some("mkv".into()),
                 path: None,
+                ..Default::default()
             }]),
             ..Default::default()
         };
-        assert_eq!(downloaded_path(&it, dir.path()), None);
+        assert_eq!(downloaded_path(&it, &layout, None), None);
 
         let [dotted, old] = paths::older_targets_for(&it, dir.path());
         std::fs::create_dir_all(old.parent().unwrap()).unwrap();
         std::fs::write(&old, b"abc").unwrap();
-        assert_eq!(downloaded_path(&it, dir.path()), Some(old.clone()));
+        assert_eq!(downloaded_path(&it, &layout, None), Some(old.clone()));
 
         // A file from the dotted layout with type folders is found first.
         std::fs::create_dir_all(dotted.parent().unwrap()).unwrap();
         std::fs::write(&dotted, b"abc").unwrap();
-        assert_eq!(downloaded_path(&it, dir.path()), Some(dotted.clone()));
+        assert_eq!(downloaded_path(&it, &layout, None), Some(dotted.clone()));
         std::fs::remove_file(&dotted).unwrap();
 
         // A partial file (wrong size) is not a download.
         std::fs::write(&old, b"ab").unwrap();
-        assert_eq!(downloaded_path(&it, dir.path()), None);
+        assert_eq!(downloaded_path(&it, &layout, None), None);
 
         let new = paths::target_for(&it, dir.path());
         assert_eq!(new, dir.path().join("Elodie.2001/Elodie.2001.mkv"));
         std::fs::create_dir_all(new.parent().unwrap()).unwrap();
         std::fs::write(&new, b"abc").unwrap();
-        assert_eq!(downloaded_path(&it, dir.path()), Some(new));
+        assert_eq!(downloaded_path(&it, &layout, None), Some(new));
     }
 }

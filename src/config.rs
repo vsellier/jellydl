@@ -8,6 +8,8 @@ use anyhow::{Context, Result, anyhow, bail};
 use directories::{BaseDirs, ProjectDirs};
 use serde::Deserialize;
 
+use crate::paths::{DownloadLayout, Naming};
+
 pub const EXAMPLE_CONFIG: &str = r#"# jellydl configuration
 
 # URL of the Jellyfin server (no trailing slash needed).
@@ -17,6 +19,17 @@ server_url = "http://localhost:8096"
 # For example: <download_dir>/Elodie.2001/Elodie.2001.mkv
 #              <download_dir>/Garden.Diaries/S01/Garden.Diaries.S01E03.Pilot.mkv
 download_dir = "~/Videos/jellyfin"
+
+# Optional folders by type. Each one that is not set uses download_dir.
+# movies_dir         = "~/Videos/Movies"
+# series_ongoing_dir = "~/Videos/Series"          # series that still get new episodes
+# series_ended_dir   = "~/Videos/Series (ended)"  # series that are finished (Jellyfin "Ended")
+# A series that already has a folder in one of the two series folders stays there.
+
+# "clean": Garden.Diaries/S01/Garden.Diaries.S01E03.Pilot.mkv (default)
+# "server": the file name on the server, in "Garden Diaries (2020)/S01/",
+#           and movies directly in movies_dir: "Elodie 2001.mkv"
+# naming = "clean"
 
 # How many downloads run at the same time. You can change it at runtime with + and -.
 max_parallel = 3
@@ -77,6 +90,10 @@ password = "change-me"
 struct FileConfig {
     server_url: String,
     download_dir: Option<String>,
+    movies_dir: Option<String>,
+    series_ongoing_dir: Option<String>,
+    series_ended_dir: Option<String>,
+    naming: Option<String>,
     max_parallel: Option<usize>,
     proxy: Option<String>,
     no_proxy: Option<String>,
@@ -131,6 +148,8 @@ pub enum Auth {
 pub struct Config {
     pub server_url: String,
     pub download_dir: PathBuf,
+    /// Where each kind of download goes (`download_dir` when not set).
+    pub layout: DownloadLayout,
     pub max_parallel: usize,
     pub proxy: Option<String>,
     pub no_proxy: Option<String>,
@@ -232,6 +251,23 @@ pub fn parse(text: &str, ov: &Overrides) -> Result<Config> {
         (None, None) => expand_tilde("~/Videos/jellyfin"),
     };
 
+    let dir_or = |d: &Option<String>| {
+        d.as_deref()
+            .map_or_else(|| download_dir.clone(), expand_tilde)
+    };
+    let layout = DownloadLayout {
+        default_dir: download_dir.clone(),
+        movies_dir: dir_or(&f.movies_dir),
+        series_ongoing_dir: dir_or(&f.series_ongoing_dir),
+        series_ended_dir: dir_or(&f.series_ended_dir),
+        naming: match f.naming.as_deref() {
+            None => Naming::default(),
+            Some(n) => {
+                Naming::parse(n).ok_or_else(|| anyhow!("naming must be \"clean\" or \"server\""))?
+            }
+        },
+    };
+
     let max_parallel = ov.max_parallel.or(f.max_parallel).unwrap_or(3);
     if !(1..=MAX_PARALLEL_LIMIT).contains(&max_parallel) {
         bail!("max_parallel must be between 1 and {MAX_PARALLEL_LIMIT}");
@@ -280,6 +316,7 @@ pub fn parse(text: &str, ov: &Overrides) -> Result<Config> {
         headers: f.headers.into_iter().collect(),
         server_url,
         download_dir,
+        layout,
         max_parallel,
         proxy,
         no_proxy: f.no_proxy,
@@ -374,6 +411,30 @@ proxy = "socks5h://u:p@127.0.0.1:1080"
 [auth]
 api_key = "abc"
 "#;
+
+    #[test]
+    fn folders_by_type() {
+        let c = parse(BASE, &Overrides::default()).unwrap();
+        let l = &c.layout;
+        assert_eq!(l.movies_dir, PathBuf::from("/data/dl"));
+        assert_eq!(l.series_ended_dir, PathBuf::from("/data/dl"));
+        assert_eq!(l.naming, Naming::Clean);
+        let t = format!(
+            "{BASE}\n"
+        )
+        .replace(
+            "[auth]",
+            "movies_dir = \"/m\"\nseries_ongoing_dir = \"/s\"\nseries_ended_dir = \"/e\"\nnaming = \"server\"\n[auth]",
+        );
+        let l = parse(&t, &Overrides::default()).unwrap().layout;
+        assert_eq!(l.default_dir, PathBuf::from("/data/dl"));
+        assert_eq!(l.movies_dir, PathBuf::from("/m"));
+        assert_eq!(l.series_ongoing_dir, PathBuf::from("/s"));
+        assert_eq!(l.series_ended_dir, PathBuf::from("/e"));
+        assert_eq!(l.naming, Naming::Server);
+        let bad = t.replace("\"server\"", "\"fancy\"");
+        assert!(parse(&bad, &Overrides::default()).is_err());
+    }
 
     #[test]
     fn parses_full_config() {

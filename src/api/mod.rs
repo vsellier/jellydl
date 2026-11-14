@@ -7,5 +7,5 @@ pub mod sort;
 
 pub use client::Jellyfin;
 pub use models::{BaseItem, Person, QueryResult};
-pub use new::NewSet;
+pub use new::{LatestKind, NewSet, with_latest_entries};
 pub use sort::{Sort, SortField};
