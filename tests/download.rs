@@ -566,3 +566,44 @@ async fn clear_right_after_cancel_still_removes_the_part_file() {
     }
     assert!(!part(&target).exists(), "cancel removes the partial file");
 }
+
+#[tokio::test]
+async fn ignores_a_job_that_is_already_in_the_queue() {
+    let server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    for name in ["a", "b"] {
+        mount_file(
+            &server,
+            name,
+            FileResponder {
+                data: data(1000),
+                ranges: true,
+                delay: Duration::from_millis(200),
+            },
+        )
+        .await;
+    }
+    let mut h = Harness::new(3);
+    h.mgr.send(Command::Enqueue(vec![job(
+        &server,
+        "a",
+        dir.path(),
+        Some(1000),
+    )]));
+    // Two requests close together (two clicks, two tabs): the same item again,
+    // and another item that has the same file name.
+    let same_target = NewJob {
+        item_id: "other".into(),
+        ..job(&server, "a", dir.path(), Some(1000))
+    };
+    h.mgr.send(Command::Enqueue(vec![
+        job(&server, "a", dir.path(), Some(1000)),
+        same_target,
+        job(&server, "b", dir.path(), Some(1000)),
+    ]));
+    h.wait_state(1, JobState::Done).await;
+    h.wait_state(2, JobState::Done).await;
+    assert_eq!(h.jobs.len(), 2, "{:#?}", h.jobs);
+    assert_eq!(h.jobs[&2].item_id, "b");
+    assert_eq!(std::fs::read(dir.path().join("a.mkv")).unwrap(), data(1000));
+}

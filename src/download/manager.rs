@@ -225,6 +225,23 @@ impl Manager {
         match c {
             Command::Enqueue(new) => {
                 for n in new {
+                    // The callers check the queue before they send, but two
+                    // requests close together can both pass that check. Two
+                    // jobs on one target would write the same .part file.
+                    let dup = self.jobs.iter().find(|j| {
+                        matches!(
+                            j.state,
+                            JobState::Queued | JobState::Running | JobState::Paused
+                        ) && (j.item_id == n.item_id || j.target == n.target)
+                    });
+                    if let Some(j) = dup {
+                        tracing::info!(
+                            "skip {}: already in the queue ({})",
+                            n.title,
+                            j.target.display()
+                        );
+                        continue;
+                    }
                     let id = self.next_id;
                     self.next_id += 1;
                     self.jobs.push(Job {
