@@ -274,6 +274,7 @@ docker run -d --name jellydl --restart unless-stopped --user "$(id -u):$(id -g)"
 - `JELLYDL_LISTEN=0.0.0.0:8080` makes jellydl listen on all addresses in the container.
   `-p 127.0.0.1:8080:8080` publishes the port only on the NAS itself: a reverse proxy on the NAS
   can reach it, other machines cannot.
+- Add `-e JELLYDL_ALLOWED_HOSTS=<name of the reverse proxy>`: see [Web interface](#web-interface).
 - `docker stop jellydl` saves the queue. Downloads continue at the next start.
 - With folders by type, use paths in the container: for example
   `movies_dir = "/downloads/Films"` and `series_ended_dir = "/downloads/Séries terminées"`.
@@ -310,6 +311,17 @@ The terminal and the web interface use the same config, folders and queue. Run o
 **There is no login.** Anyone who can open the page can start downloads with your Jellyfin account.
 By default jellydl listens only on `127.0.0.1`. To use it from other machines, put a reverse proxy
 with authentication in front of it (for example Caddy or nginx with basic auth, or an SSO proxy).
+
+Other web sites that you open in your browser cannot use jellydl: it accepts only requests for
+`localhost`, an IP address, or a name that you allow, and it refuses changes sent from other sites.
+If you open the page with a name (the reverse proxy, or `nas.local`), allow this name:
+
+```sh
+jellydl --serve --allow-host jellydl.example.org   # or JELLYDL_ALLOWED_HOSTS=jellydl.example.org,nas.local
+```
+
+Without it, the page shows `unknown Host`.
+
 The page uses server-sent events (`/api/events`): turn off response buffering for this path in the proxy
 (nginx: `proxy_buffering off;`).
 

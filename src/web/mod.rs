@@ -3,7 +3,11 @@
 //! A JSON API over the same Jellyfin client, download queue and folder layout
 //! as the terminal interface, and one embedded page that uses it.
 //! There is no login: listen on a local address, or put a reverse proxy with
-//! authentication in front.
+//! authentication in front. [`guard`] keeps other web sites away.
+
+mod guard;
+
+pub use guard::HostGuard;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::convert::Infallible;
@@ -54,8 +58,9 @@ pub async fn serve(
     layout: DownloadLayout,
     max_parallel: usize,
     listen: SocketAddr,
+    allowed_hosts: Vec<String>,
 ) -> Result<()> {
-    let app = app(api, mgr, mgr_events, layout, max_parallel);
+    let app = app(api, mgr, mgr_events, layout, max_parallel, allowed_hosts);
     let listener = tokio::net::TcpListener::bind(listen)
         .await
         .with_context(|| format!("cannot listen on {listen}"))?;
@@ -74,6 +79,7 @@ pub fn app(
     mut mgr_events: mpsc::UnboundedReceiver<MgrEvent>,
     layout: DownloadLayout,
     max_parallel: usize,
+    allowed_hosts: Vec<String>,
 ) -> Router {
     let (events, _) = broadcast::channel(1024);
     let state = Arc::new(WebState {
@@ -108,7 +114,10 @@ pub fn app(
             let _ = st.events.send(msg.to_string());
         }
     });
-    router(state)
+    router(state).layer(axum::middleware::from_fn_with_state(
+        Arc::new(HostGuard::new(allowed_hosts)),
+        guard::guard,
+    ))
 }
 
 async fn shutdown_signal() {

@@ -42,6 +42,15 @@ struct Cli {
     /// a reverse proxy with authentication in front.
     #[arg(long, env = "JELLYDL_LISTEN", default_value = "127.0.0.1:8080")]
     listen: std::net::SocketAddr,
+    /// Other host names of the web interface, for example the name of the
+    /// reverse proxy or of the NAS. localhost and IP addresses always work.
+    #[arg(
+        long = "allow-host",
+        value_name = "NAME",
+        env = "JELLYDL_ALLOWED_HOSTS",
+        value_delimiter = ','
+    )]
+    allowed_hosts: Vec<String>,
 }
 
 #[tokio::main]
@@ -170,6 +179,7 @@ async fn main() -> Result<()> {
             cfg.layout.clone(),
             cfg.max_parallel,
             cli.listen,
+            cli.allowed_hosts,
         )
         .await;
         eprintln!("Saving the download queue...");

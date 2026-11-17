@@ -93,7 +93,7 @@ async fn lists_and_downloads_with_the_layout() {
         },
         mgr_tx,
     );
-    let app = jellydl::web::app(api, mgr, mgr_rx, layout, 2);
+    let app = jellydl::web::app(api, mgr, mgr_rx, layout, 2, Vec::new());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -189,4 +189,89 @@ async fn lists_and_downloads_with_the_layout() {
         .await
         .unwrap();
     assert_eq!(bad.status(), 400);
+}
+
+/// Other web sites must not use the API through the browser of the user:
+/// no DNS rebinding (wrong Host), no cross-site POST (wrong Origin).
+#[tokio::test]
+async fn rejects_other_hosts_and_origins() {
+    let jf_server = MockServer::start().await;
+    let dir = tempfile::tempdir().unwrap();
+    let api = login(&jf_server, dir.path()).await;
+    let (mgr_tx, mgr_rx) = mpsc::unbounded_channel();
+    let mgr = download::spawn(
+        ManagerConfig {
+            client: reqwest::Client::new(),
+            auth_header: api.auth_header().to_string(),
+            max_parallel: 1,
+            queue_file: None,
+            retry_base: Duration::from_millis(10),
+            max_retries: 1,
+            max_speed: None,
+            start_delay: None,
+        },
+        mgr_tx,
+    );
+    let layout = DownloadLayout::single(dir.path().join("dl"));
+    let allowed = vec!["Jelly.Example.com".to_string()];
+    let app = jellydl::web::app(api, mgr, mgr_rx, layout, 1, allowed);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let http = reqwest::Client::builder().no_proxy().build().unwrap();
+    let base = format!("http://{addr}");
+
+    let get = |host: &str| {
+        http.get(format!("{base}/api/jobs"))
+            .header("Host", host)
+            .send()
+    };
+    for host in [
+        addr.to_string(),
+        format!("localhost:{}", addr.port()),
+        format!("[::1]:{}", addr.port()),
+        "192.168.1.20:8080".into(),
+        "jelly.example.com".into(),
+    ] {
+        assert_eq!(get(&host).await.unwrap().status(), 200, "{host}");
+    }
+    for host in ["evil.example.net:8080", "jelly.example.com.evil.net", ""] {
+        assert_eq!(get(host).await.unwrap().status(), 403, "{host:?}");
+    }
+
+    let post = |origin: Option<&str>, host: &str| {
+        let r = http
+            .post(format!("{base}/api/queue/clear"))
+            .header("Host", host);
+        match origin {
+            Some(o) => r.header("Origin", o),
+            None => r,
+        }
+        .send()
+    };
+    let me = addr.to_string();
+    // The page itself, a tool without Origin (curl), and the reverse proxy name.
+    assert_eq!(
+        post(Some(&format!("http://{me}")), &me)
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    assert_eq!(post(None, &me).await.unwrap().status(), 204);
+    assert_eq!(
+        post(Some("https://jelly.example.com"), &me)
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    // Another site, a site on a bare IP address, a sandboxed frame.
+    for origin in ["https://evil.example.net", "http://203.0.113.7", "null"] {
+        assert_eq!(
+            post(Some(origin), &me).await.unwrap().status(),
+            403,
+            "{origin}"
+        );
+    }
 }
